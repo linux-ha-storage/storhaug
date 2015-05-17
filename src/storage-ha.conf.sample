@@ -1,0 +1,23 @@
+# Name of the HA cluster created.
+HA_NAME="storage-ha"
+
+# Password of the hacluster user
+HA_PASSWORD="hacluster"
+
+# The server on which cluster-wide ocnfiguration is managed.
+# IP/Hostname
+HA_SERVER="server1"
+
+# The set of nodes that forms the HA cluster.
+# Comma-deliminated IP/Hostname list
+HA_NODES="server1,server2,..."
+
+# Virtual IPs of each of the nodes specified above.
+# Whitespace-deliminated IP address list
+HA_VIPS="10.x.x.x 10.x.x.x"
+
+# Managed access methods
+# Whitespace-delimited list. Valid values:
+#   nfs
+#   smb
+HA_SERVICES="nfs smb"

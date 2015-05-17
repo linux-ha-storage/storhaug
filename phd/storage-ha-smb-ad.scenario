@@ -1,0 +1,229 @@
+# Storage-HA-SGoG: Samba and Ganesha over GlusterFS
+
+#################################
+# Scenario Requirements Section #
+#################################
+= REQUIREMENTS =
+nodes=2
+floating_ips=1
+
+packages=storage-ha-smb storage-ha-nfs
+
+cluster_init=0
+
+######################
+# Deployment Scripts #
+######################
+= SCRIPTS =
+
+##
+# remove previously existing volumes and peers
+##
+target=$PHD_ENV_nodes1
+....
+chkconfig glusterd on
+service glusterd start
+
+for vol in $(gluster volume list); do
+	echo y | gluster volume stop $vol force
+	echo y | gluster volume delete $vol
+done
+
+for f in $(find /var/lib/glusterd/peers/ -type f); do
+	host=`sed -n 's/^hostname1=\(.*\)/\1/p' $f`
+	gluster peer detach $host force
+done
+
+exit 0
+....
+
+##
+# Make sure all managed services are disabled
+# setup samba configs
+# patch required files
+##
+target=all
+....
+service glusterd stop
+
+chkconfig ctdb off
+chkconfig smb off
+chkconfig nmb off
+chkconfig winbind off
+service ctdb stop
+service smb stop
+service nmb stop
+service winbind stop
+
+chkconfig pacemaker on
+
+# AD-related config
+grep -qs "PEERDNS" /etc/sysconfig/network-scripts/ifcfg-eth0 | grep -q "no" || cat << END >> /etc/sysconfig/network-scripts/ifcfg-eth0
+PEERDNS="no"
+END
+
+cat << END > /etc/resolv.conf
+nameserver 192.168.100.1
+search domain.com
+END
+
+
+# Ganesha config
+mkdir -p /etc/glusterfs-ganesha/exports
+cat << END > /etc/glusterfs-ganesha/exports/export.volume_export.conf
+EXPORT{
+	Export_Id = 90;
+	Path="/export";
+	FSAL {
+		name = "GLUSTER";
+		hostname="$(hostname -s)";
+		volume="export";
+	}
+	Access_type = RW;
+	Squash = No_root_squash;
+	Disable_ACL = TRUE;
+	Pseudo="/export";
+	Protocols = "3,4" ;
+	Transports = "UDP,TCP" ;
+	SecType = "sys";
+	Tag = "volume_export";
+}
+END
+
+grep -qs "export.volume_export.conf" /etc/glusterfs-ganesha/nfs-ganesha.conf
+if [[ ! $? ]]; then
+	cat << END >> /etc/glusterfs-ganesha/nfs-ganesha.conf
+%include "/etc/glusterfs-ganesha/exports/export.volume_export.conf"
+END
+fi
+
+# Samba config
+mkdir -p /data/shares/xfs
+
+cat << END > /etc/samba/smb.conf
+[global]
+	workgroup = DOMAIN
+	realm = DOMAIN.COM
+	netbios name = STORAGE-HA
+	server string = Samba Server Version %v
+	security = ADS
+	log file = /var/log/samba/log.%m
+	max log size = 50
+	server max protocol = SMB3
+	clustering = Yes
+	load printers = No
+	disable spoolss = Yes
+	show add printer wizard = No
+	stat cache = No
+	winbind enum users = Yes
+	winbind enum groups = Yes
+	winbind use default domain = Yes
+	idmap config DOMAIN:range = 500-40000
+	idmap config DOMAIN:backend = autorid
+	idmap config *:range = 70001-80000
+	idmap config * : backend = tdb
+	printing = bsd
+	cups options = raw
+	print command = lpr -r -P'%p' %s
+	lpq command = lpq -P'%p'
+	lprm command = lprm -P'%p' %j
+	map archive = No
+	map readonly = no
+	store dos attributes = Yes
+	kernel share modes = No
+
+[gluster-share]
+	comment = For samba share of volume share
+	path = /
+	read only = No
+	guest ok = Yes
+	vfs objects = glusterfs
+	glusterfs:loglevel = 7
+	glusterfs:logfile = /var/log/samba/glusterfs-share.%M.log
+	glusterfs:volume = share
+END
+
+rm -f /etc/ctdb/nodes
+for node in $(echo $PHD_ENV_nodes); do
+	ip=$(getent hosts $node | head -n 1 | awk '{print $1}')
+	echo "$ip" >> /etc/ctdb/nodes
+done
+
+### CTDB RA
+if [[ ! -f CTDB ]]; then
+	wget https://raw.githubusercontent.com/jarrpa/storage-ha/master/src/CTDB
+fi
+chmod 755 CTDB
+cp -f CTDB /usr/lib/ocf/resource.d/heartbeat/CTDB
+
+echo -e "storage\nstorage" | passwd hacluster
+
+# Wipe leftover GlusterFS status
+rm -rf /var/lib/glusterd/vols/*
+rm -rf /var/lib/glusterd/peers/*
+
+# clean brick directories
+rm -rf /data/bricks
+mkdir -p /data/bricks/ctdb
+mkdir -p /data/bricks/ganesha
+mkdir -p /data/bricks/share
+mkdir -p /data/bricks/export
+
+# remove rdma
+sed -i "s/,rdma//" /etc/glusterfs/glusterd.vol
+
+service glusterd start
+
+exit 0
+....
+
+##
+# do peer probe
+# create gluster volumes
+##
+target=$PHD_ENV_nodes1
+....
+
+node_count=`wc -w <<< "${PHD_ENV_nodes}"`
+gluster peer probe $PHD_ENV_nodes2
+
+sleep 2
+
+gluster volume create ctdb replica ${node_count} transport tcp \
+  ${PHD_ENV_nodes1}:/data/bricks/ctdb \
+  ${PHD_ENV_nodes2}:/data/bricks/ctdb \
+  force
+gluster volume set ctdb network.ping-timeout 10
+gluster volume set ctdb user.smb disable
+gluster volume set ctdb nfs.disable on
+gluster volume start ctdb
+gluster volume list | grep ctdb
+
+gluster volume create ganesha replica 2 transport tcp \
+  ${PHD_ENV_nodes1}:/data/bricks/ganesha \
+  ${PHD_ENV_nodes2}:/data/bricks/ganesha \
+  force
+gluster volume set ganesha network.ping-timeout 10
+gluster volume set ganesha user.smb disable
+gluster volume set ganesha nfs.disable on
+gluster volume start ganesha
+gluster volume list | grep ganesha
+
+gluster volume create share transport tcp \
+  ${PHD_ENV_nodes1}:/data/bricks/share \
+  ${PHD_ENV_nodes2}:/data/bricks/share \
+  force
+gluster volume set share user.smb disable
+gluster volume set share nfs.disable on
+gluster volume start share
+gluster volume list | grep share
+
+gluster volume create export transport tcp \
+  ${PHD_ENV_nodes1}:/data/bricks/export \
+  ${PHD_ENV_nodes2}:/data/bricks/export \
+  force
+gluster volume set export user.smb disable
+gluster volume set export nfs.disable on
+gluster volume start export
+gluster volume list | grep export
+....
