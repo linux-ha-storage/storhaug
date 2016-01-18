@@ -1,6 +1,6 @@
 %define major_version 0
 %define minor_version 7
-%define release 1%{?dist}
+%define release 2%{?dist}
 
 Name: storage-ha
 Summary: High-Availability Storage Server Add-on
@@ -148,6 +148,9 @@ fi
 
 
 %changelog
+* Mon Jan 18 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.7-2
+- Remove specfile and source tarball from source dir.
+
 * Mon Jan 18 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.7-1
 - Force cluster creation
 - Allow for definition of which nodes will be storage nodes
