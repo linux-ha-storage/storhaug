@@ -32,6 +32,9 @@ HA_NUM_SERVERS=0
 HA_CONF="%CONFDIR/sysconfig/storage-ha.conf"
 HA_CONF_INCDIR="%CONFDIR/sysconfig/storage-ha.d/"
 CLUSTER_NAME_OPTION=""
+HA_SERVERS=""
+STORAGE_SERVERS=""
+STORAGE_NUM_SERVERS=0
 
 ### Cluster functions
 
@@ -64,6 +67,8 @@ determine_servers()
 		IFS=${tmp_ifs}
 		HA_NUM_SERVERS=${num_servers}
 		HA_SERVERS="${HA_NODES//,/ }"
+		STORAGE_SERVERS="${STORAGE_NODES//,/ }"
+		STORAGE_NUM_SERVERS=$(wc -w <<< "${STORAGE_SERVERS}")
 	else
 		ha_servers=$(pcs status | grep "Online:" | grep -o '\[.*\]' | sed -e 's/\[//' | sed -e 's/\]//')
 		IFS=$' '
@@ -85,8 +90,8 @@ setup_cluster()
 
 	logger "Setting up cluster ${name} on the following servers: ${servers}"
 
-	pcs cluster auth ${servers} -u hacluster -p ${HA_PASSWORD}
-	pcs cluster setup ${CLUSTER_NAME_OPTION} ${name} ${servers}
+	pcs cluster auth ${servers} -u hacluster -p ${HA_PASSWORD} --force
+	pcs cluster setup --force ${CLUSTER_NAME_OPTION} ${name} ${servers}
 	if [ $? -ne 0 ]; then
 		logger "pcs cluster setup ${CLUSTER_NAME_OPTION} ${name} ${servers} failed"
 		exit 1;
@@ -104,6 +109,16 @@ setup_cluster()
 		 unclean=$(pcs status | grep -u "UNCLEAN")
 	done
 	sleep 1
+
+	local tmp_ifs=${IFS}
+	IFS=$' '
+	for server in ${STORAGE_SERVERS:-$HA_SERVERS} ; do
+		pcs property set --node $server role=storage
+		if [ $? -ne 0 ]; then
+			logger "warning: pcs property set --node $server role=storage failed"
+		fi
+	done
+	IFS=${tmp_ifs}
 
 	if [ ${num_servers} -lt 3 ]; then
 		pcs property set no-quorum-policy=ignore
@@ -173,17 +188,19 @@ setup_create_resources()
 			device="localhost:/$HA_SMB_VOL" \
 			directory="/gluster/lock" \
 			fstype="glusterfs" \
-			options="_netdev,defaults,transport=tcp,xlator-option=*client*.ping-timeout=10" \
-		--clone ctdb_lock-clone ctdb_lock meta interleave="true"
+			options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
+		--clone ctdb_lock-clone ctdb_lock meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
-	mkdir -p /gluster/state
-	pcs -f $cibfile resource create ganesha_state ocf:heartbeat:Filesystem \
-		params \
-			device="localhost:/$HA_NFS_VOL" \
-			directory="/gluster/state" \
-			fstype="glusterfs" \
-			options="_netdev,defaults,transport=tcp,xlator-option=*client*.ping-timeout=10" \
-		--clone ganesha_state-clone ganesha_state meta interleave="true"
+	pcs -f $cibfile constraint location ctdb_lock-clone rule resource-discovery=exclusive score=0 role eq storage
+
+#	mkdir -p /gluster/state
+#	pcs -f $cibfile resource create ganesha_state ocf:heartbeat:Filesystem \
+#		params \
+#			device="localhost:/$HA_NFS_VOL" \
+#			directory="/gluster/state" \
+#			fstype="glusterfs" \
+#                       options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
+#               --clone ganesha_state-clone ganesha_state meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
 	pcs cluster cib-push $cibfile
 	if [ $? -ne 0 ]; then
@@ -202,44 +219,45 @@ setup_create_resources()
 		op monitor interval="10" timeout="30" \
 		op start interval="0" timeout="90" \
 		op stop interval="0" timeout="100" \
-		--clone ctdb-clone ctdb meta interleave="true" globally-unique="false"
+		--clone ctdb-clone ctdb meta interleave="true" globally-unique="false" clone-max="${STORAGE_NUM_SERVERS}"
 
 	# CTDB: We need our shared recovery lock file
 	pcs -f $cibfile constraint colocation add ctdb-clone with ctdb_lock-clone INFINITY
 	pcs -f $cibfile constraint order ctdb_lock-clone then ctdb-clone INFINITY
 
 	# Samba
-	pcs -f $cibfile resource create nmb lsb:nmb \
+	pcs -f $cibfile resource create nmb systemd:nmb \
 		op start timeout="60" interval="0" \
 		op stop timeout="60" interval="0" \
 		op monitor interval="60" timeout="60"
-	pcs -f $cibfile resource create smb lsb:smb \
+	pcs -f $cibfile resource create smb systemd:smb \
 		op start timeout="60" interval="0" \
 		op stop timeout="60" interval="0" \
 		op monitor interval="60" timeout="60"
 	pcs -f $cibfile resource group add samba-group nmb smb
-	pcs -f $cibfile resource clone samba-group meta interleave="true"
+	pcs -f $cibfile resource clone samba-group meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
+	# Samba: We need CTDB
 	pcs -f $cibfile constraint colocation add samba-group-clone with ctdb-clone INFINITY
 	pcs -f $cibfile constraint order ctdb-clone then samba-group-clone INFINITY
 
 	# Ganesha
-	pcs -f $cibfile resource create ganesha ganesha \
-		params \
-			config="/etc/glusterfs-ganesha/nfs-ganesha.conf" \
-		--clone ganesha-clone ganesha meta interleave="true" \
-										   globally-unique="false" \
-										   notify="true"
-
-	# Ganesha: We need our shared state FS
-	pcs -f $cibfile constraint colocation add ganesha-clone with ganesha_state-clone INFINITY
-	pcs -f $cibfile constraint order ganesha_state-clone then ganesha-clone INFINITY
-
-	pcs cluster cib-push $cibfile
-	if [ $? -ne 0 ]; then
-		logger "Failed to create service resources."
-		exit 0
-	fi
+#	pcs -f $cibfile resource create ganesha ganesha \
+#		params \
+#			config="/etc/glusterfs-ganesha/nfs-ganesha.conf" \
+#		--clone ganesha-clone ganesha meta interleave="true" \
+#										   globally-unique="false" \
+#										   notify="true"
+#
+#	# Ganesha: We need our shared state FS
+#	pcs -f $cibfile constraint colocation add ganesha-clone with ganesha_state-clone INFINITY
+#	pcs -f $cibfile constraint order ganesha_state-clone then ganesha-clone INFINITY
+#
+#	pcs cluster cib-push $cibfile
+#	if [ $? -ne 0 ]; then
+#		logger "Failed to create service resources."
+#		exit 0
+#	fi
 
 	# Virtual IPs
 	local ipcount=0
@@ -252,13 +270,15 @@ setup_create_resources()
 			op monitor interval=60s \
 			meta resource-stickiness="0"
 
-		pcs -f $cibfile resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
-			params \
-				ip=${ip} \
-			meta resource-stickiness="0"
+		pcs -f $cibfile constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
 
-		pcs -f $cibfile constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
-		pcs -f $cibfile constraint order vip${ipcount} then vip${ipcount}_trigger
+#		pcs -f $cibfile resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
+#			params \
+#				ip=${ip} \
+#			meta resource-stickiness="0"
+
+#		pcs -f $cibfile constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
+#		pcs -f $cibfile constraint order vip${ipcount} then vip${ipcount}_trigger
 	done
 
 	pcs cluster cib-push $cibfile
@@ -337,7 +357,7 @@ case "${cmd}" in
 		determine_servers "setup"
 
 		if [ ${HA_NUM_SERVERS} -gt 1 ]; then
-			setup_state_volume ${HA_SERVERS}
+#			setup_state_volume ${HA_SERVERS}
 			setup_cluster ${HA_NAME} ${HA_NUM_SERVERS} "${HA_SERVERS}"
 			setup_create_resources ${HA_SERVERS}
 		else

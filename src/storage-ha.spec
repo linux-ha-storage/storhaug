@@ -1,5 +1,5 @@
 %define major_version 0
-%define minor_version 6
+%define minor_version 7
 %define release 1%{?dist}
 
 Name: storage-ha
@@ -16,8 +16,12 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-root
 Source0: %{name}-%{version}.tar.gz
 
 Requires: glusterfs-server
+%if %{defined rhel} && %{rhel} < 7
 Requires: cman
 Requires: pacemaker
+%else
+Requires: fence-agents-all
+%endif
 Requires: pcs
 
 %description
@@ -47,7 +51,7 @@ High-Availability SMB add-on for storage servers
 
 
 %prep
-%setup -q -c
+%setup -q -n %{name}
 
 %install
 %{__rm} -rf %{buildroot}
@@ -67,6 +71,19 @@ install -m 0755 ganesha %{buildroot}%{_prefix}/lib/ocf/resource.d/heartbeat/gane
 install -m 0755 ganesha_trigger %{buildroot}%{_prefix}/lib/ocf/resource.d/heartbeat/ganesha_trigger
 
 %post
+%if %{defined rhel} && %{rhel} < 7
+chkconfig corosync off
+chkconfig pacemaker on
+chkconfig pcsd on
+service pcsd start
+%else
+systemctl start pcsd.service
+systemctl enable pcsd.service
+%endif
+
+
+%post smb
+%if %{defined rhel} && %{rhel} < 7
 chkconfig ctdb off
 chkconfig smb off
 chkconfig nmb off
@@ -75,11 +92,21 @@ service ctdb stop
 service smb stop
 service nmb stop
 service winbind stop
+%else
+systemctl stop ctdb smb nmb winbind
+systemctl disable ctdb smb nmb winbind
+%endif
 
+%post nfs
+%if %{defined rhel} && %{rhel} < 7
 chkconfig nfs-server off
 chkconfig nfs-lock off
 service nfs-server stop
 service nfs-lock stop
+%else
+systemctl stop nfs-server nfs-lock
+systemctl disable nfs-server nfs-lock
+%endif
 
 [ -d /var/lib/nfs.backup ] || mv /var/lib/nfs /var/lib/nfs.backup
 [ -d /var/lib/nfs ] && rm -rf /var/lib/nfs
@@ -87,14 +114,14 @@ ln -s /gluster/state/`hostname`/nfs /var/lib/nfs
 
 if [[ ! -f /etc/dbus-1/system.d/org.ganesha.nfsd.conf ]]; then
 	cp /etc/glusterfs-ganesha/org.ganesha.nfsd.conf /etc/dbus-1/system.d/
+%if %{defined rhel} && %{rhel} < 7
 	service messagebus restart
+%else
+	systemctl restart messagebus
+%endif
 fi
 
-chkconfig pacemaker on
-chkconfig pcsd on
-service pcsd start
-
-%postun
+%postun nfs
 if [ -d /var/lib/nfs.backup ]; then
 	rm -rf /var/lib/nfs
 	mv /var/lib/nfs.backup /var/lib/nfs
@@ -121,6 +148,15 @@ fi
 
 
 %changelog
+* Mon Jan 18 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.7-1
+- Force cluster creation
+- Allow for definition of which nodes will be storage nodes
+- Enable direct-io for GlusterFS backend volumes
+- Temporarily comment out NFS functionality
+
+* Thu Nov 19 2015 Jose A. Rivera <jarrpa@redhat.com> - 0.6-2
+- Add functionality for EL7
+
 * Thu Apr 23 2015 Jose A. Rivera <jarrpa@redhat.com> - 0.6-1
 - Properly update CIB file during cluster creation
 - Better tempfile handling

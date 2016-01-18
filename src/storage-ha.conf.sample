@@ -4,13 +4,17 @@ HA_NAME="storage-ha"
 # Password of the hacluster user
 HA_PASSWORD="hacluster"
 
-# The server on which cluster-wide ocnfiguration is managed.
+# The server on which cluster-wide configuration is managed.
 # IP/Hostname
 HA_SERVER="server1"
 
 # The set of nodes that forms the HA cluster.
 # Comma-deliminated IP/Hostname list
 HA_NODES="server1,server2,..."
+
+# [OPTIONAL] A subset of HA nodes that will serve as storage servers.
+# Comma-deliminated IP/Hostname list
+STORAGE_NODES="server2,..."
 
 # Virtual IPs of each of the nodes specified above.
 # Whitespace-deliminated IP address list
