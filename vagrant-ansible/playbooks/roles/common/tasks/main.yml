@@ -1,0 +1,45 @@
+---
+# Include variables and define needed variables.
+#- name: Include OS-specific variables.
+#  include_vars: "{{ ansible_os_family }}.yml"
+
+# Setup/install tasks.
+#- include: setup-RedHat.yml
+#  when: ansible_os_family == 'RedHat'
+
+#- include: setup-Debian.yml
+#  when: ansible_os_family == 'Debian'
+
+- name: Enable firewall
+  service: name=firewalld state=started enabled=yes
+
+- name: Assign firewall interfaces
+  command: "firewall-cmd --permanent --add-interface={{ item }}"
+  with_items: "{{ firewall_interfaces }}"
+  when: firewall_interfaces
+
+- name: Enable firewall services
+  firewalld: service={{ item }} permanent=true state=enabled
+  with_items: "{{ firewall_services }}"
+  when: firewall_services
+
+- name: Enable firewall port
+  firewalld: port={{ item }} permanent=true state=enabled
+  with_items: "{{ firewall_ports }}"
+  when: firewall_ports
+
+- name: Reload firewall config
+  command: "firewall-cmd --reload"
+
+#- name: Flush iptables the first time playbook runs.
+#  command: iptables -F creates=/etc/init.d/firewall
+
+#- name: Copy firewall script into place.
+#  template: src=firewall.bash.j2 dest=/etc/firewall.bash owner=root group=root mode=0744
+#  notify: restart firewall
+
+#- name: Copy firewall init script into place.
+#  template: src=firewall.j2 dest=/etc/init.d/firewall owner=root group=root mode=0755
+
+#- name: Ensure the firewall is enabled and will start on boot.
+#  service: name=firewall state=started enabled=yes

@@ -1,0 +1,7 @@
+[storage-ha]
+name=Storage-HA RPMs
+baseurl=file:///shared/repo/el$releasever/
+enabled=1
+skip_if_unavailable=0
+gpgcheck=0
+

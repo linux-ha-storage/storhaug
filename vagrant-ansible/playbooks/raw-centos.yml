@@ -1,0 +1,20 @@
+---
+- hosts: all
+  name: Raw Installation (RedHat)
+  sudo: yes
+  gather_facts: False
+
+  tasks:
+    - name: Make sure playbook dependencies are installed
+      raw: >
+        for REPO in `find /home/vagrant/sync/playbooks -name '*.repo'`; do
+          cp $REPO /etc/yum.repos.d/;
+        done;
+        cd /etc/yum.repos.d/;
+        curl http://download.gluster.org/pub/gluster/glusterfs/LATEST/EPEL.repo/glusterfs-epel.repo;
+        curl http://download.gluster.org/pub/gluster/glusterfs/nfs-ganesha/2.1.0/EPEL.repo/nfs-ganesha.repo;
+        curl http://download.gluster.org/pub/gluster/glusterfs/samba/EPEL.repo/glusterfs-samba-epel.repo;
+        rpm --import http://download.gluster.org/pub/gluster/glusterfs/samba/EPEL.repo/pub.key;
+        rpm --import http://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{{ el_ver }};
+        yum install -y http://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ el_ver }}.noarch.rpm; 
+        yum install -y {{ install_pkgs }};

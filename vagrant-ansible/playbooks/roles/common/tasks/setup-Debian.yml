@@ -1,0 +1,4 @@
+---
+- name: Ensure common packages are installed.
+  apt: pkg=iptables state=installed
+  when: ansible_os_family == 'Debian'

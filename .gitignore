@@ -1,0 +1,10 @@
+hacking
+.vagrant/
+*.sw*
+custom.yml*
+custom_files/
+active_vms.yml
+active_vms.yaml
+vagrant.yaml*
+vagrant.yml*
+host_vars/

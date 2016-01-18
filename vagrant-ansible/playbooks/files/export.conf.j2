@@ -1,0 +1,20 @@
+EXPORT{
+        Export_Id = 90;
+        Path="/{{ item.name }}";
+{% if item.FSAL|upper == "GLUSTER" %}
+        FSAL {
+                name = "GLUSTER";
+                hostname="$(hostname -s)";
+                volume="{{ item.name }}";
+        }
+{% endif %}
+        Access_type = RW;
+        Squash = No_root_squash;
+        Disable_ACL = TRUE;
+        Pseudo="/{{ item.name }}";
+        Protocols = "3,4" ;
+        Transports = "UDP,TCP" ;
+        SecType = "sys";
+        Tag = "volume_export";
+}
+END

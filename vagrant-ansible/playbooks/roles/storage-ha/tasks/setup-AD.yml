@@ -1,0 +1,71 @@
+---
+- name: Stop all Samba services
+  service: name={{item.name}} state={{item.state}}
+  with_items:
+    - { name: 'smb', state: 'stopped' }
+    - { name: 'nmb', state: 'stopped' }
+    - { name: 'winbind', state: 'stopped' }
+    - { name: 'ctdb', state: 'stopped' }
+
+- name: Mount CTDB reclock volume
+  mount: name=/shared/lock src=localhost:/ctdb fstype=glusterfs opts=_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10 state=mounted
+  when: ctdb['setup_ctdb']
+
+- name: Restart CTDB
+  service: name={{item.name}} state={{item.state}}
+  with_items:
+    - { name: 'ctdb', state: 'restarted' }
+  when: ctdb['setup_ctdb']
+
+- name: Verify CTDB is healthy
+  shell: while true; do sleep 1; status=$(ctdb status 2>/dev/null); rc=$?; if [ $rc -ne 0 ]; then exit $rc; fi; if ! echo $status | grep -qs 'UNHEALTHY (THIS'; then exit; fi; done
+  when: ctdb['setup_ctdb']
+
+- name: Configure resolv.conf for Active Directory
+  template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0744
+  with_items:
+    - { src: 'files/resolv.conf.j2', dest: '/etc/resolv.conf' }
+
+- name: Is NetworkManager installed?
+  shell: which nmcli 2>&1 >/dev/null; exit $?
+  register: detect_nm
+  changed_when: False
+  failed_when: False
+
+- name: Disable NetworkManager DNS
+  template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0744
+  with_items:
+    - { src: 'files/99-no-dns.conf', dest: '/etc/NetworkManager/conf.d/99-no-dns.conf' }
+  when: detect_nm.rc == 0
+
+- name: Restart NetworkManager
+  service: name="NetworkManager" state=restarted
+  when: detect_nm.rc == 0
+
+- name: Configure nsswitch
+  shell: sed -ri '/^(passwd|group)/s/$/ winbind/' /etc/nsswitch.conf
+
+- name: Join Active Directory domain
+  shell: "net join -U Administrator%{{ ad_passwd }}"
+  run_once: true
+  delegate_to: "{{ groups['smb_servers'][0] }}"
+
+- name: Register Active Directory DNS
+  shell: "net ads -P dns register {{ ha_name }}.{{ ad_domain }} {{ vips|join(' ') }}"
+  run_once: true
+  delegate_to: "{{ groups['smb_servers'][0] }}"
+
+- name: Verify Active Directory domain membership
+  shell: net ads testjoin
+  run_once: true
+  delegate_to: "{{ groups['smb_servers'][0] }}"
+
+- name: Stop CTDB
+  service: name={{item.name}} state={{item.state}}
+  with_items:
+    - { name: 'ctdb', state: 'stopped' }
+  when: ctdb['setup_ctdb']
+
+- name: Unmount CTDB reclock volume
+  mount: name=/gluster/lock src=localhost:/ctdb fstype=glusterfs state=unmounted
+  when: ctdb['setup_ctdb']

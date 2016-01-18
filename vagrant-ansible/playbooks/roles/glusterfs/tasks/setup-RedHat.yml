@@ -1,0 +1,16 @@
+---
+- name: Fetch GlusterFS repo file
+  get_url: dest=/etc/yum.repos.d/glusterfs-epel.repo
+           url=http://download.gluster.org/pub/gluster/glusterfs/LATEST/EPEL.repo/glusterfs-epel.repo
+
+- name: Set GlusterFS repo file permissions
+  file: owner=root group=root mode=0644
+        path=/etc/yum.repos.d/glusterfs-epel.repo
+  
+- name: Import GlusterFS GPG key.
+  rpm_key:
+    key: "http://download.gluster.org/pub/gluster/glusterfs/LATEST/pub.key"
+    state: present
+
+- name: Ensure GlusterFS is installed.
+  yum: "name=glusterfs-server,glusterfs-client state=installed"

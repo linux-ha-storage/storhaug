@@ -1,0 +1,4 @@
+---
+- name: Install Storage-HA
+  yum: pkg=storage-ha,storage-ha-smb state=present
+

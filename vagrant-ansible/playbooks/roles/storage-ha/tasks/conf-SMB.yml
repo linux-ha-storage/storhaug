@@ -1,0 +1,13 @@
+---
+- name: Configure SMB services
+  service: "name={{ item.daemon }} state={{ item.state }} enabled={{ item.enabled }}"
+  with_items:
+    - { daemon: 'ctdb', state: 'stopped', enabled: 'no' }
+    - { daemon: 'smb', state: 'stopped', enabled: 'no' }
+    - { daemon: 'nmb', state: 'stopped', enabled: 'no' }
+    - { daemon: 'winbind', state: 'stopped', enabled: 'no' }
+
+- name: Configure Samba server
+  template: src=smb.conf.j2
+            dest=/etc/samba/smb.conf
+            owner=root group=root mode=0644

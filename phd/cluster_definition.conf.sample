@@ -1,3 +1,0 @@
-package_dir=/path/to/storage-ha/rpm/repo
-nodes=vm-01 vm-02 vm-03 vm-04
-floating_ips=192.168.100.10 192.168.100.11

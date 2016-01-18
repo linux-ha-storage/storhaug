@@ -1,0 +1,51 @@
+[global]
+	netbios name = {{ ha_name|upper }}
+{% if ad['setup_ad'] %}
+	realm = {{ ad['domain']|upper }}
+	workgroup = {{ ad['domain']|upper|regex_replace('^([^\\.]*).*$', '\\1') }}
+	security = ADS
+	winbind enum users = Yes
+	winbind enum groups = Yes
+	winbind use default domain = Yes
+	idmap config {{ ad['domain']|upper|regex_replace('^([^\\.]*).*$', '\\1') }}:range = 500-40000
+	idmap config {{ ad['domain']|upper|regex_replace('^([^\\.]*).*$', '\\1') }}:backend = autorid
+	idmap config *:range = 70001-80000
+	idmap config * : backend = tdb
+{% else %}
+	workgroup = WORKGROUP
+	security = user
+{% endif %}
+{%- if ctdb['setup_ctdb'] %}
+	clustering = Yes
+{% endif %}
+	log file = /var/log/samba/log.%m
+	max log size = 50
+	server max protocol = SMB3
+	load printers = No
+	disable spoolss = Yes
+	show add printer wizard = No
+	stat cache = No
+	printing = bsd
+	cups options = raw
+	print command = lpr -r -P'%p' %s
+	lpq command = lpq -P'%p'
+	lprm command = lprm -P'%p' %j
+	map archive = No
+	map readonly = no
+	store dos attributes = Yes
+	kernel share modes = No
+	debug pid = yes
+{% if samba['config'] %}
+{% for opt in samba['config'] %}
+	{{ opt }} = {{ samba['config'][opt] }}
+{% endfor %}
+{% endif %}
+
+{% if samba['shares'] %}
+{% for share in samba['shares'] %}
+[{{share}}]
+{% for opt in samba['shares'][share] %}
+	{{ opt }} = {{ samba['shares'][share][opt] }}
+{% endfor %}
+{% endfor %}
+{% endif %}

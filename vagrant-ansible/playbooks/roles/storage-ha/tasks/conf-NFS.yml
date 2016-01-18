@@ -1,0 +1,14 @@
+---
+- name: Configure NFS-Ganesha exports
+  template: src=export.conf.j2 dest=/etc/glusterfs-ganesha/exports/export.{{item.name}}.conf
+  with_items: "{{ nfs['exports'] }}"
+
+- name: Enable NFS-Ganesha exports
+  shell: >
+grep -qs "export.{{ item.name }}.conf" /etc/glusterfs-ganesha/nfs-ganesha.conf
+if [[ ! $? ]]; then
+        cat << END >> /etc/glusterfs-ganesha/nfs-ganesha.conf
+%include "/etc/glusterfs-ganesha/exports/export.{{ item.name }}.conf"
+END
+fi
+  with_items: "{{ nfs['exports'] }}"

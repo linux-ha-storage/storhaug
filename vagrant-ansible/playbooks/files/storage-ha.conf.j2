@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Name of the HA cluster created.
+HA_NAME="{{ ha_name }}"
+
+# Password of the hacluster user
+HA_PASSWORD="hacluster"
+
+# The server on which cluster-wide configuration is managed.
+# IP/Hostname
+HA_SERVER="{{ hostvars[groups['ha_servers'][0]]['ansible_hostname'] }}"
+
+# The set of nodes that forms the HA cluster.
+# Comma-deliminated IP/Hostname list
+HA_NODES="{%- for host in groups['ha_servers'] -%}{{hostvars[host]['ansible_hostname']}}{% if not loop.last %},{% endif %}{%- endfor -%}"
+
+# [OPTIONAL] A subset of HA nodes that will serve as storage servers.
+# Comma-deliminated IP/Hostname list
+STORAGE_NODES="{%- for host in groups['gluster_servers'] -%}{{hostvars[host]['ansible_hostname']}}{% if not loop.last %},{% endif %}{%- endfor -%}"
+
+# Virtual IPs of each of the nodes specified above.
+# Whitespace-deliminated IP address list
+HA_VIPS="{{ vips|join(' ') }}"
+
+# Managed access methods
+# Whitespace-delimited list. Valid values:
+#   nfs
+#   smb
+HA_SERVICES="smb"

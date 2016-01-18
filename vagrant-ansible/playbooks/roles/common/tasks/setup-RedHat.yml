@@ -1,0 +1,40 @@
+---
+# EPEL
+- name: Import EPEL GPG key.
+  rpm_key:
+    key: "http://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{{ ansible_distribution_version[:1] }}"
+    state: present
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
+
+- name: Install EPEL repo.
+  yum: pkg="http://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ ansible_distribution_version[:1] }}.noarch.rpm" state=installed
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
+
+# NFS
+- name: Fetch NFS-Ganesha repo file
+  get_url: dest=/etc/yum.repos.d/nfs-ganesha.repo
+           url=http://download.gluster.org/pub/gluster/glusterfs/nfs-ganesha/2.1.0/EPEL.repo/nfs-ganesha.repo
+
+- name: Set NFS-Ganesha repo file permissions
+  file: owner=root group=root mode=0644
+        path=/etc/yum.repos.d/nfs-ganesha.repo
+
+- name: Import NFS-Ganesha GPG key.
+  rpm_key:
+    key: "http://download.gluster.org/pub/gluster/glusterfs/nfs-ganesha/2.1.0/EPEL.repo/pub.key"
+    state: present
+
+# SMB
+- name: Fetch Gluster Samba repo file
+  get_url: dest=/etc/yum.repos.d/gluster-samba.repo
+           url=http://download.gluster.org/pub/gluster/glusterfs/samba/EPEL.repo/glusterfs-samba-epel.repo
+
+- name: Set Gluster Samba repo file permissions
+  file: owner=root group=root mode=0644
+        path=/etc/yum.repos.d/gluster-samba.repo
+
+- name: Import Gluster Samba GPG key.
+  rpm_key:
+    key: "http://download.gluster.org/pub/gluster/glusterfs/samba/EPEL.repo/pub.key"
+    state: present
+

@@ -1,0 +1,24 @@
+## This file is managed by Ansible, all changes will be lost ##
+#
+{% macro print_hash(hash) %}
+{% for key, value in hash.iteritems() %}
+	{{ "%-30s" | format(key) | replace("_"," ") }} = {{ value }}
+{% endfor %}
+{% endmacro %}
+{% macro print_section(hash, section='global') %}
+[{{ section }}]
+{{ print_hash(hash) }}
+
+{% endmacro %}
+# Default options
+{{ print_section(samba_global) }}
+{% if samba_global_custom is defined and samba_global_custom %}
+	# Custom options
+{{ print_hash(hash=samba_global_custom) }}
+{% endif %}
+# Share definitions
+{% if samba_shares is defined and samba_shares %}
+{% for share in samba_shares.keys() %}
+{{ print_section(samba_shares[share], share) }}
+{% endfor %}
+{% endif %}
