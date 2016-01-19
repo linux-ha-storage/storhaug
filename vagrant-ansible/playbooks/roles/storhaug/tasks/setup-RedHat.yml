@@ -1,0 +1,4 @@
+---
+- name: Install Storhaug
+  yum: pkg=storhaug,storhaug-smb state=present
+

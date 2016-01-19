@@ -59,7 +59,7 @@ settings = {
     :gluster_servers => [ "all" ],
   },
   :ha => {
-    :ha_name => "storage_ha",
+    :ha_name => "storhaug",
     :virtual_ips => [
       { :ip => "192.168.121.111" },
       { :ip => "192.168.121.112" },
@@ -368,12 +368,12 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       end
 
       playbooks = []
-      playbooks.push("playbooks/raw-el7.yml")
+      playbooks.push("playbooks/raw-centos.yml")
       custom_provision = "playbooks/custom.yml"
       if File.exists?(custom_provision)
         playbooks.push(custom_provision)
       end
-      playbooks.push("playbooks/storage-ha.yml")
+      playbooks.push("playbooks/storhaug.yml")
       playbooks.each do |playbook|
         node.vm.provision "ansible" do |ansible|
 #          ansible.verbose = "vvv"

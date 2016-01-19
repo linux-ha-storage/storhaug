@@ -1,0 +1,24 @@
+---
+# tasks file for storhaug
+
+#- include_vars: NFS.yml
+#  when: nfs
+
+- include_vars: SMB.yml
+  when: smb
+
+#- include: conf-NFS.yml
+#  when: nfs
+
+- include: conf-SMB.yml
+  when: smb
+
+- name: Configure HA user
+  user: name=hacluster password=buqSogFSZLJQM
+
+- name: Configure HA services
+  service: "name={{ item.daemon }} state={{ item.state|default(omit) }} enabled={{ item.enabled|default(omit) }}"
+  with_items:
+    - { daemon: 'pcsd', state: 'started', enabled: 'yes' }
+    - { daemon: 'pacemaker', enabled: 'yes' }
+

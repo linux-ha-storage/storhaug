@@ -1,0 +1,191 @@
+---
+# file: storhaug.yml
+- hosts: ha_servers
+  name: Initializing
+  sudo: yes
+
+  tasks:
+    - name: Detect guest OS family
+      group_by: key={{ ansible_os_family }}
+      changed_when: False
+
+    - name: Set hostname
+      hostname: "name={{ inventory_hostname }}{% if ad['domain'] is defined and ad['domain'] %}.{{ ad['domain'] }}{% endif %}"
+
+    - name: Disable SELinux
+      selinux: state=disabled
+
+    - name: Create extra disk partitions
+      shell: "{ blkid | grep -q /dev/{{item[0].dev}}{{item[1].num}} && echo FOUND; } || { parted /dev/{{item[0].dev}} mklabel msdos && parted /dev/{{item[0].dev}} mkpart primary 512 {{item[1].size}}; }"
+      register: part_result
+      changed_when: "'FOUND' not in part_result.stdout"
+      with_subelements:
+        - extra_disks
+        - parts
+      when: extra_disks is defined
+
+    - name: Create extra disk filesystems
+      filesystem: fstype={{item[1].fs}} dev=/dev/{{item[0].dev}}{{item[1].num}}
+      with_subelements:
+        - extra_disks
+        - parts
+      when: extra_disks is defined
+
+    - name: Mount extra disk filesystems
+      mount: name={{item[1].mount}} src=/dev/{{item[0].dev}}{{item[1].num}} fstype={{item[1].fs}} state=mounted
+      with_subelements:
+        - extra_disks
+        - parts
+      when: extra_disks is defined
+
+- hosts: RedHat
+  name: Server Setup (RedHat)
+  sudo: yes
+  gather_facts: False
+
+  tasks:
+    - include: roles/common/tasks/setup-RedHat.yml
+    - include: roles/glusterfs/tasks/setup-RedHat.yml
+      when: gluster['setup_gluster']
+
+- hosts: none
+  name: Server Setup (Common)
+  sudo: yes
+
+  roles:
+    - common
+
+  vars:
+    - firewall_services:
+      - ssh
+      - glusterfs
+      - samba
+      - samba-client
+      - nfs
+      - high-availability
+    - firewall_ports:
+      - '4379/tcp'
+    - firewall_interfaces:
+      - 'eth0'
+      - 'eth1'
+
+- hosts: gluster_servers:smb_servers
+  name: Server Setup (GlusterFS)
+  sudo: yes
+
+  roles:
+    - glusterfs
+
+  vars:
+    - gluster_default_cluster: "{%- for host in groups['gluster_servers'] -%}{{hostvars[host]['ansible_hostname']}}{% if not loop.last %},{% endif %}{%- endfor -%}"
+    - gluster_default_replica: "{{ 3 if groups['gluster_servers']|count >= 3 else (2 if groups['gluster_servers']|count == 2 else omit) }}"
+
+  tasks:
+    - name: Ensure Gluster brick directories exist.
+      file: "path={{ [gluster['bricks_dir'], item.name]|join('/') }} state=directory mode=0775"
+      with_items: "{{ gluster['volumes'] }}"
+      when: "'gluster_servers' in group_names"
+
+    - name: Probe Samba peers
+      command: gluster peer probe {{ item }}
+      with_items: "{{ groups['smb_servers'] }}"
+      run_once: true
+      when: "'gluster_servers' in group_names"
+      register: probe_result
+      changed_when: "'already' not in probe_result.stdout and 'localhost' not in probe_result.stdout"
+
+    - name: Configure Gluster volumes.
+      gluster_volume:
+        state: present
+        name: "{{ item.name }}"
+        brick: "{{ [gluster['bricks_dir'], item.name]|join('/') }}"
+        replicas: >
+          {% if item.replica is defined and item.replica == 'n' -%}
+            {{ groups['gluster_servers']|count if groups['gluster_servers']|count > 1 else omit }}
+          {%- elif item.replica is defined and item.replica == 0 -%}
+            {{ omit }}
+          {%- else -%}
+            {{ item.replica | default(gluster_default_replica) }}
+          {%- endif %}
+        cluster: "{{ item.cluster | default(gluster_default_cluster) }}"
+        options: "{{ item.opts|default(omit) }}"
+        force: yes
+      run_once: true
+      when: "'gluster_servers' in group_names"
+      with_items: "{{ gluster['volumes'] }}"
+      register: result
+      until: result|success
+
+    - name: Start Gluster volumes.
+      gluster_volume:
+        name: "{{ item.name }}"
+        state: started
+      run_once: true
+      when: "'gluster_servers' in group_names"
+      with_items: "{{ gluster['volumes'] }}"
+
+    - name: Set volume permissions
+      shell: "mount -t glusterfs localhost:/{{ item.name }} /mnt && chmod -c {{ item.root_mode|default('777') }} /mnt; umount /mnt"
+      with_items: "{{ gluster['volumes'] }}"
+      run_once: true
+      when: "'gluster_servers' in group_names"
+      register: perms_result
+      changed_when: "'changed' in perms_result.stdout"
+
+- hosts: RedHat
+  name: Storhaug Installation (RedHat)
+  sudo: yes
+  gather_facts: False
+
+  tasks:
+    - include: roles/storhaug/tasks/setup-RedHat.yml
+
+- hosts: smb_servers
+  name: Server Setup (SMB)
+  sudo: yes
+
+#  roles:
+#    - samba
+
+  tasks:
+    - name: Copy CTDB config files
+      template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0744
+      with_items:
+        - { src: "{% if ctdb['config'] is defined and ctdb['config'] %}{{ ctdb['config'] }}{% else %}'files/ctdb'{% endif %}", dest: '/etc/sysconfig/ctdb' }
+        - { src: 'files/nodes.j2', dest: '/etc/ctdb/nodes' }
+      when: ctdb['setup_ctdb'] is defined and ctdb['setup_ctdb']
+
+    - name: Copy Samba config files
+      template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0744
+      with_items:
+        - { src: "files/smb.conf.j2", dest: '/etc/samba/smb.conf' }
+      when: samba['setup_samba'] is defined and samba['setup_samba']
+
+- hosts: ad_server
+  name: Active Directory Setup
+  sudo: yes
+
+  tasks:
+    - include: roles/storhaug/tasks/setup-AD.yml
+      when: ad['setup_ad']
+
+- hosts: ha_servers
+  name: Storhaug Configuration and Initialization
+  sudo: yes 
+
+  roles:
+    - storhaug
+
+  tasks:
+    - name: Copy Storhaug config files
+      template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0744
+      with_items:
+        - { src: 'files/storhaug.conf.j2', dest: '/etc/sysconfig/storhaug.conf' }
+        - { src: 'files/CTDB', dest: '/usr/lib/ocf/resource.d/heartbeat/CTDB' }
+
+    - name: Teardown any pre-existing cluster.
+      shell: pcs cluster stop; pcs cluster destroy
+
+    - name: Start Storhaug
+      shell: storhaug setup
+      run_once: true
