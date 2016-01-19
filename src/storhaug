@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# STORAGE-HA: High-Availability Storage Server with Pacemaker
+# STORHAUG: High-Availability Storage Server with Pacemaker
 #
 # Copyright (c) 2015 Kaleb S. Keithley <kkeithle@redhat.com>
 # Copyright (c) 2015 Meghana Madhusudhan <mmadhusu@redhat.com>
@@ -29,8 +29,8 @@
 #
 
 HA_NUM_SERVERS=0
-HA_CONF="%CONFDIR/sysconfig/storage-ha.conf"
-HA_CONF_INCDIR="%CONFDIR/sysconfig/storage-ha.d/"
+HA_CONF="%CONFDIR/sysconfig/storhaug.conf"
+HA_CONF_INCDIR="%CONFDIR/sysconfig/storhaug.d/"
 CLUSTER_NAME_OPTION=""
 HA_SERVERS=""
 STORAGE_SERVERS=""

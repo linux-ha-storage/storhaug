@@ -1,5 +1,5 @@
 # Name of the HA cluster created.
-HA_NAME="storage-ha"
+HA_NAME="storhaug"
 
 # Password of the hacluster user
 HA_PASSWORD="hacluster"
