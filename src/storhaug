@@ -36,6 +36,29 @@ HA_SERVERS=""
 STORAGE_SERVERS=""
 STORAGE_NUM_SERVERS=0
 
+### Utility functions
+
+usage()
+{
+    echo -e "Usage: `basename "$0"` [<OPTIONS>] <COMMAND> [<ARGUMENTS>]"
+    echo -e "Manage a storhaug high-availability (HA) storage cluster."
+    echo -e "\nGlobal OPTIONS:"
+    echo -e "  -h, --help            Output this useful help message"
+    echo -e "\nCOMMANDS:"
+    echo -e "  status                Check the status of the cluster"
+    echo -e "  setup                 Setup a new cluster"
+    echo -e "  teardown              Teardown an existing cluster"
+    echo -e "  add                   Add a node to the cluster"
+    echo -e "  delete, remove        Remove a node from the cluster"
+    echo -e "\nCommand ARGUMENTS:"
+    echo -e "  add <NODE>            Add hostname NODE to the cluster"
+    echo -e "  remove <NODE>         Remove hostname NODE from the cluster"
+    echo -e "  delete <NODE>         Synonym for 'remove'"
+    echo -e "\n\nConfiguration is read from the following locations:"
+    echo -e "  ${HA_CONF}"
+    echo -e "  ${HA_CONF_INCDIR}*.conf"
+}
+
 ### Cluster functions
 
 check_cluster_exists()
@@ -327,8 +350,9 @@ setup_state_volume()
 ### Mainline
 
 cmd=${1}; shift
-if [[ $# > 1 ]]; then
-    HA_CONF=${1}; shift
+if [[ ${cmd} == *help || ${cmd} == "-h" ]]; then
+    usage
+    exit 0
 fi
 node=""
 vip=""
@@ -393,7 +417,8 @@ case "${cmd}" in
         exec pcs status
         ;;
     *)
-        echo "Usage: ganesha-ha.sh setup|teardown|add|remove|status"
+        echo -e "Unknown argument: ${cmd}\nFor help, run: `basename "$0"` -h"
+        logger "Unknown argument: ${cmd}"
         ;;
 esac
 
