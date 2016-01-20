@@ -40,295 +40,295 @@ STORAGE_NUM_SERVERS=0
 
 check_cluster_exists()
 {
-	local name=${1}
-	local cluster_name=""
+    local name=${1}
+    local cluster_name=""
 
-	if [ -e /var/run/corosync.pid ]; then
-		cluster_name=$(pcs status | grep "Cluster name:" | cut -d ' ' -f 3)
-		if [ ${cluster_name} -a ${cluster_name} = ${name} ]; then
-			logger "Cluster $name already exists, exiting"
-			exit 0
-		fi
-	fi
+    if [ -e /var/run/corosync.pid ]; then
+        cluster_name=$(pcs status | grep "Cluster name:" | cut -d ' ' -f 3)
+        if [ ${cluster_name} -a ${cluster_name} = ${name} ]; then
+            logger "Cluster $name already exists, exiting"
+            exit 0
+        fi
+    fi
 }
 
 determine_servers()
 {
-	local cmd=${1}
-	local num_servers=0
-	local tmp_ifs=${IFS}
-	local ha_servers=""
+    local cmd=${1}
+    local num_servers=0
+    local tmp_ifs=${IFS}
+    local ha_servers=""
 
-	if [[ "X${cmd}X" != "XteardownX" ]]; then
-		IFS=$','
-		for server in ${HA_NODES} ; do
-			num_servers=$(expr ${num_servers} + 1)
-		done
-		IFS=${tmp_ifs}
-		HA_NUM_SERVERS=${num_servers}
-		HA_SERVERS="${HA_NODES//,/ }"
-		STORAGE_SERVERS="${STORAGE_NODES//,/ }"
-		STORAGE_NUM_SERVERS=$(wc -w <<< "${STORAGE_SERVERS}")
-	else
-		ha_servers=$(pcs status | grep "Online:" | grep -o '\[.*\]' | sed -e 's/\[//' | sed -e 's/\]//')
-		IFS=$' '
-		for server in ${ha_servers} ; do
-			num_servers=$(expr ${num_servers} + 1)
-		done
-		IFS=${tmp_ifs}
-		HA_NUM_SERVERS=${num_servers}
-		HA_SERVERS="${ha_servers}"
-	fi
+    if [[ "X${cmd}X" != "XteardownX" ]]; then
+        IFS=$','
+        for server in ${HA_NODES} ; do
+            num_servers=$(expr ${num_servers} + 1)
+        done
+        IFS=${tmp_ifs}
+        HA_NUM_SERVERS=${num_servers}
+        HA_SERVERS="${HA_NODES//,/ }"
+        STORAGE_SERVERS="${STORAGE_NODES//,/ }"
+        STORAGE_NUM_SERVERS=$(wc -w <<< "${STORAGE_SERVERS}")
+    else
+        ha_servers=$(pcs status | grep "Online:" | grep -o '\[.*\]' | sed -e 's/\[//' | sed -e 's/\]//')
+        IFS=$' '
+        for server in ${ha_servers} ; do
+            num_servers=$(expr ${num_servers} + 1)
+        done
+        IFS=${tmp_ifs}
+        HA_NUM_SERVERS=${num_servers}
+        HA_SERVERS="${ha_servers}"
+    fi
 }
 
 setup_cluster()
 {
-	local name=${1}
-	local num_servers=${2}
-	local servers=${3}
-	local unclean=""
+    local name=${1}
+    local num_servers=${2}
+    local servers=${3}
+    local unclean=""
 
-	logger "Setting up cluster ${name} on the following servers: ${servers}"
+    logger "Setting up cluster ${name} on the following servers: ${servers}"
 
-	pcs cluster auth ${servers} -u hacluster -p ${HA_PASSWORD} --force
-	pcs cluster setup --force ${CLUSTER_NAME_OPTION} ${name} ${servers}
-	if [ $? -ne 0 ]; then
-		logger "pcs cluster setup ${CLUSTER_NAME_OPTION} ${name} ${servers} failed"
-		exit 1;
-	fi
-	pcs cluster start --all
-	if [ $? -ne 0 ]; then
-		logger "pcs cluster start failed"
-		exit 1;
-	fi
+    pcs cluster auth ${servers} -u hacluster -p ${HA_PASSWORD} --force
+    pcs cluster setup --force ${CLUSTER_NAME_OPTION} ${name} ${servers}
+    if [ $? -ne 0 ]; then
+        logger "pcs cluster setup ${CLUSTER_NAME_OPTION} ${name} ${servers} failed"
+        exit 1;
+    fi
+    pcs cluster start --all
+    if [ $? -ne 0 ]; then
+        logger "pcs cluster start failed"
+        exit 1;
+    fi
 
-	sleep 3
-	unclean=$(pcs status | grep -u "UNCLEAN")
-	while [[ "${unclean}X" = "UNCLEANX" ]]; do
-		 sleep 1
-		 unclean=$(pcs status | grep -u "UNCLEAN")
-	done
-	sleep 1
+    sleep 3
+    unclean=$(pcs status | grep -u "UNCLEAN")
+    while [[ "${unclean}X" = "UNCLEANX" ]]; do
+         sleep 1
+         unclean=$(pcs status | grep -u "UNCLEAN")
+    done
+    sleep 1
 
-	local tmp_ifs=${IFS}
-	IFS=$' '
-	for server in ${STORAGE_SERVERS:-$HA_SERVERS} ; do
-		pcs property set --node $server role=storage
-		if [ $? -ne 0 ]; then
-			logger "warning: pcs property set --node $server role=storage failed"
-		fi
-	done
-	IFS=${tmp_ifs}
+    local tmp_ifs=${IFS}
+    IFS=$' '
+    for server in ${STORAGE_SERVERS:-$HA_SERVERS} ; do
+        pcs property set --node $server role=storage
+        if [ $? -ne 0 ]; then
+            logger "warning: pcs property set --node $server role=storage failed"
+        fi
+    done
+    IFS=${tmp_ifs}
 
-	if [ ${num_servers} -lt 3 ]; then
-		pcs property set no-quorum-policy=ignore
-		if [ $? -ne 0 ]; then
-			logger "warning: pcs property set no-quorum-policy=ignore failed"
-		fi
-	fi
-	pcs property set stonith-enabled=false
-	if [ $? -ne 0 ]; then
-		logger "warning: pcs property set stonith-enabled=false failed"
-	fi
+    if [ ${num_servers} -lt 3 ]; then
+        pcs property set no-quorum-policy=ignore
+        if [ $? -ne 0 ]; then
+            logger "warning: pcs property set no-quorum-policy=ignore failed"
+        fi
+    fi
+    pcs property set stonith-enabled=false
+    if [ $? -ne 0 ]; then
+        logger "warning: pcs property set stonith-enabled=false failed"
+    fi
 }
 
 teardown_cluster()
 {
-	local name=${1}
+    local name=${1}
 
-	logger "tearing down cluster $name"
+    logger "tearing down cluster $name"
 
-	for server in ${HA_SERVERS} ; do
-		if [[ ${HA_NODES} != *${server}* ]]; then
-			logger "info: ${server} is not in config, removing"
+    for server in ${HA_SERVERS} ; do
+        if [[ ${HA_NODES} != *${server}* ]]; then
+            logger "info: ${server} is not in config, removing"
 
-			pcs cluster stop ${server}
-			if [ $? -ne 0 ]; then
-				logger "pcs cluster stop ${server}"
-			fi
+            pcs cluster stop ${server}
+            if [ $? -ne 0 ]; then
+                logger "pcs cluster stop ${server}"
+            fi
 
-			pcs cluster node remove ${server}
-			if [ $? -ne 0 ]; then
-				logger "warning: pcs cluster node remove ${server} failed"
-			fi
-		fi
-	done
+            pcs cluster node remove ${server}
+            if [ $? -ne 0 ]; then
+                logger "warning: pcs cluster node remove ${server} failed"
+            fi
+        fi
+    done
 
-	# BZ 1193433 - pcs doesn't reload cluster.conf after modification
-	# after teardown completes, a subsequent setup will appear to have
-	# 'remembered' the deleted node. You can work around this by
-	# issuing another `pcs cluster node remove $node`,
-	# `crm_node -f -R $server`, or
-	# `cibadmin --delete --xml-text '<node id="$server"
-	# uname="$server"/>'
+# BZ 1193433 - pcs doesn't reload cluster.conf after modification
+# after teardown completes, a subsequent setup will appear to have
+# 'remembered' the deleted node. You can work around this by
+# issuing another `pcs cluster node remove $node`,
+# `crm_node -f -R $server`, or
+# `cibadmin --delete --xml-text '<node id="$server"
+# uname="$server"/>'
 
-	pcs cluster stop --all
-	if [ $? -ne 0 ]; then
-		logger "warning pcs cluster stop --all failed"
-	fi
+    pcs cluster stop --all
+    if [ $? -ne 0 ]; then
+        logger "warning pcs cluster stop --all failed"
+    fi
 
-	pcs cluster destroy
-	if [ $? -ne 0 ]; then
-		logger "error pcs cluster destroy failed"
-		exit 1
-	fi
+    pcs cluster destroy
+    if [ $? -ne 0 ]; then
+        logger "error pcs cluster destroy failed"
+        exit 1
+    fi
 }
 
 ### Resources functions
 
 setup_create_resources()
 {
-	local cibfile=$(mktemp --tmpdir=$HA_CONF_secdir)
-	pcs cluster cib $cibfile
+    local cibfile=$(mktemp --tmpdir=$HA_CONF_secdir)
+    pcs cluster cib $cibfile
 
-	# Shared volumes
-	mkdir -p /gluster/lock
-	pcs -f $cibfile resource create ctdb_lock ocf:heartbeat:Filesystem \
-		params \
-			device="localhost:/$HA_SMB_VOL" \
-			directory="/gluster/lock" \
-			fstype="glusterfs" \
-			options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
-		--clone ctdb_lock-clone ctdb_lock meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
+    # Shared volumes
+    mkdir -p /gluster/lock
+    pcs -f $cibfile resource create ctdb_lock ocf:heartbeat:Filesystem \
+        params \
+            device="localhost:/$HA_SMB_VOL" \
+            directory="/gluster/lock" \
+            fstype="glusterfs" \
+            options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
+        --clone ctdb_lock-clone ctdb_lock meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
-	pcs -f $cibfile constraint location ctdb_lock-clone rule resource-discovery=exclusive score=0 role eq storage
+    pcs -f $cibfile constraint location ctdb_lock-clone rule resource-discovery=exclusive score=0 role eq storage
 
-#	mkdir -p /gluster/state
-#	pcs -f $cibfile resource create ganesha_state ocf:heartbeat:Filesystem \
-#		params \
-#			device="localhost:/$HA_NFS_VOL" \
-#			directory="/gluster/state" \
-#			fstype="glusterfs" \
+#    mkdir -p /gluster/state
+#    pcs -f $cibfile resource create ganesha_state ocf:heartbeat:Filesystem \
+#        params \
+#            device="localhost:/$HA_NFS_VOL" \
+#            directory="/gluster/state" \
+#            fstype="glusterfs" \
 #                       options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
 #               --clone ganesha_state-clone ganesha_state meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
-	pcs cluster cib-push $cibfile
-	if [ $? -ne 0 ]; then
-		logger "Failed to create filesystem resources."
-		exit 0
-	fi
+    pcs cluster cib-push $cibfile
+    if [ $? -ne 0 ]; then
+        logger "Failed to create filesystem resources."
+        exit 0
+    fi
 
-	# CTDB
-	pcs -f $cibfile resource create ctdb ocf:heartbeat:CTDB \
-		params \
-			ctdb_recovery_lock="/gluster/lock/lockfile" \
-			ctdb_socket="/var/run/ctdb/ctdbd.socket" \
-			ctdb_manages_winbind="no" \
-			ctdb_manages_samba="no" \
-			ctdb_logfile="/var/log/log.ctdb" \
-		op monitor interval="10" timeout="30" \
-		op start interval="0" timeout="90" \
-		op stop interval="0" timeout="100" \
-		--clone ctdb-clone ctdb meta interleave="true" globally-unique="false" clone-max="${STORAGE_NUM_SERVERS}"
+    # CTDB
+    pcs -f $cibfile resource create ctdb ocf:heartbeat:CTDB \
+        params \
+            ctdb_recovery_lock="/gluster/lock/lockfile" \
+            ctdb_socket="/var/run/ctdb/ctdbd.socket" \
+            ctdb_manages_winbind="no" \
+            ctdb_manages_samba="no" \
+            ctdb_logfile="/var/log/log.ctdb" \
+        op monitor interval="10" timeout="30" \
+        op start interval="0" timeout="90" \
+        op stop interval="0" timeout="100" \
+        --clone ctdb-clone ctdb meta interleave="true" globally-unique="false" clone-max="${STORAGE_NUM_SERVERS}"
 
-	# CTDB: We need our shared recovery lock file
-	pcs -f $cibfile constraint colocation add ctdb-clone with ctdb_lock-clone INFINITY
-	pcs -f $cibfile constraint order ctdb_lock-clone then ctdb-clone INFINITY
+    # CTDB: We need our shared recovery lock file
+    pcs -f $cibfile constraint colocation add ctdb-clone with ctdb_lock-clone INFINITY
+    pcs -f $cibfile constraint order ctdb_lock-clone then ctdb-clone INFINITY
 
-	# Samba
-	pcs -f $cibfile resource create nmb systemd:nmb \
-		op start timeout="60" interval="0" \
-		op stop timeout="60" interval="0" \
-		op monitor interval="60" timeout="60"
-	pcs -f $cibfile resource create smb systemd:smb \
-		op start timeout="60" interval="0" \
-		op stop timeout="60" interval="0" \
-		op monitor interval="60" timeout="60"
-	pcs -f $cibfile resource group add samba-group nmb smb
-	pcs -f $cibfile resource clone samba-group meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
+    # Samba
+    pcs -f $cibfile resource create nmb systemd:nmb \
+        op start timeout="60" interval="0" \
+        op stop timeout="60" interval="0" \
+        op monitor interval="60" timeout="60"
+    pcs -f $cibfile resource create smb systemd:smb \
+        op start timeout="60" interval="0" \
+        op stop timeout="60" interval="0" \
+        op monitor interval="60" timeout="60"
+    pcs -f $cibfile resource group add samba-group nmb smb
+    pcs -f $cibfile resource clone samba-group meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
-	# Samba: We need CTDB
-	pcs -f $cibfile constraint colocation add samba-group-clone with ctdb-clone INFINITY
-	pcs -f $cibfile constraint order ctdb-clone then samba-group-clone INFINITY
+    # Samba: We need CTDB
+    pcs -f $cibfile constraint colocation add samba-group-clone with ctdb-clone INFINITY
+    pcs -f $cibfile constraint order ctdb-clone then samba-group-clone INFINITY
 
-	# Ganesha
-#	pcs -f $cibfile resource create ganesha ganesha \
-#		params \
-#			config="/etc/glusterfs-ganesha/nfs-ganesha.conf" \
-#		--clone ganesha-clone ganesha meta interleave="true" \
-#										   globally-unique="false" \
-#										   notify="true"
+    # Ganesha
+#    pcs -f $cibfile resource create ganesha ganesha \
+#        params \
+#            config="/etc/glusterfs-ganesha/nfs-ganesha.conf" \
+#        --clone ganesha-clone ganesha meta interleave="true" \
+#                                           globally-unique="false" \
+#                                           notify="true"
 #
-#	# Ganesha: We need our shared state FS
-#	pcs -f $cibfile constraint colocation add ganesha-clone with ganesha_state-clone INFINITY
-#	pcs -f $cibfile constraint order ganesha_state-clone then ganesha-clone INFINITY
+#    # Ganesha: We need our shared state FS
+#    pcs -f $cibfile constraint colocation add ganesha-clone with ganesha_state-clone INFINITY
+#    pcs -f $cibfile constraint order ganesha_state-clone then ganesha-clone INFINITY
 #
-#	pcs cluster cib-push $cibfile
-#	if [ $? -ne 0 ]; then
-#		logger "Failed to create service resources."
-#		exit 0
-#	fi
+#    pcs cluster cib-push $cibfile
+#    if [ $? -ne 0 ]; then
+#        logger "Failed to create service resources."
+#        exit 0
+#    fi
 
-	# Virtual IPs
-	local ipcount=0
-	for ip in ${HA_VIPS}; do
-		ipcount=$(expr ${ipcount} + 1)
-		pcs -f $cibfile resource create vip${ipcount} ocf:heartbeat:IPaddr2 \
-			params \
-				ip=${ip} \
-				flush_routes="true" \
-			op monitor interval=60s \
-			meta resource-stickiness="0"
+    # Virtual IPs
+    local ipcount=0
+    for ip in ${HA_VIPS}; do
+        ipcount=$(expr ${ipcount} + 1)
+        pcs -f $cibfile resource create vip${ipcount} ocf:heartbeat:IPaddr2 \
+            params \
+                ip=${ip} \
+                flush_routes="true" \
+            op monitor interval=60s \
+            meta resource-stickiness="0"
 
-		pcs -f $cibfile constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
+        pcs -f $cibfile constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
 
-#		pcs -f $cibfile resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
-#			params \
-#				ip=${ip} \
-#			meta resource-stickiness="0"
+#        pcs -f $cibfile resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
+#            params \
+#                ip=${ip} \
+#            meta resource-stickiness="0"
 
-#		pcs -f $cibfile constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
-#		pcs -f $cibfile constraint order vip${ipcount} then vip${ipcount}_trigger
-	done
+#        pcs -f $cibfile constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
+#        pcs -f $cibfile constraint order vip${ipcount} then vip${ipcount}_trigger
+    done
 
-	pcs cluster cib-push $cibfile
-	if [ $? -ne 0 ]; then
-		logger "Failed to create virtual IP resources."
-		exit 0
-	fi
+    pcs cluster cib-push $cibfile
+    if [ $? -ne 0 ]; then
+        logger "Failed to create virtual IP resources."
+        exit 0
+    fi
 
-	rm -f ${cibfile}
+    rm -f ${cibfile}
 }
 
 ### Shared state
 
 setup_state_volume()
 {
-	local mnt=$(mktemp -d --tmpdir=$HA_CONF_secdir)
-	local longname=""
-	local shortname=""
-	local dname=""
+    local mnt=$(mktemp -d --tmpdir=$HA_CONF_secdir)
+    local longname=""
+    local shortname=""
+    local dname=""
 
-	mount -t glusterfs ${HA_SERVER}:/${HA_NFS_VOL} ${mnt}
+    mount -t glusterfs ${HA_SERVER}:/${HA_NFS_VOL} ${mnt}
 
-	longname=$(hostname)
-	dname=${longname#$(hostname -s)}
+    longname=$(hostname)
+    dname=${longname#$(hostname -s)}
 
-	while [[ ${1} ]]; do
-		mkdir -p ${mnt}/${1}${dname}/nfs/ganesha/v4recov
-		mkdir -p ${mnt}/${1}${dname}/nfs/ganesha/v4old
-		mkdir -p ${mnt}/${1}${dname}/nfs/statd/sm
-		mkdir -p ${mnt}/${1}${dname}/nfs/statd/sm.bak
-		mkdir -p ${mnt}/${1}${dname}/nfs/statd/state
-		touch ${mnt}/${1}${dname}/nfs/state
-		for server in ${HA_SERVERS} ; do
-			if [ ${server} != ${1}${dname} ]; then
-				ln -s ${mnt}/${server}/nfs/ganesha ${mnt}/${1}${dname}/nfs/ganesha/${server}
-				ln -s ${mnt}/${server}/nfs/statd ${mnt}/${1}${dname}/nfs/statd/${server}
-			fi
-		done
-		shift
-	done
+    while [[ ${1} ]]; do
+        mkdir -p ${mnt}/${1}${dname}/nfs/ganesha/v4recov
+        mkdir -p ${mnt}/${1}${dname}/nfs/ganesha/v4old
+        mkdir -p ${mnt}/${1}${dname}/nfs/statd/sm
+        mkdir -p ${mnt}/${1}${dname}/nfs/statd/sm.bak
+        mkdir -p ${mnt}/${1}${dname}/nfs/statd/state
+        touch ${mnt}/${1}${dname}/nfs/state
+        for server in ${HA_SERVERS} ; do
+            if [ ${server} != ${1}${dname} ]; then
+                ln -s ${mnt}/${server}/nfs/ganesha ${mnt}/${1}${dname}/nfs/ganesha/${server}
+                ln -s ${mnt}/${server}/nfs/statd ${mnt}/${1}${dname}/nfs/statd/${server}
+            fi
+        done
+        shift
+    done
 
-	umount ${mnt}
-	rmdir ${mnt}
+    umount ${mnt}
+    rmdir ${mnt}
 }
 
 ### Mainline
 
 cmd=${1}; shift
 if [[ $# > 1 ]]; then
-	HA_CONF=${1}; shift
+    HA_CONF=${1}; shift
 fi
 node=""
 vip=""
@@ -339,7 +339,7 @@ HA_CONF_sec="$HA_CONF_secdir/sec.conf"
 # Filter all config files into secure format
 egrep '^#|^[^ ]*=[^;&]*'  "$HA_CONF" > "$HA_CONF_sec"
 for conffile in `ls $HA_CONF_INCDIR 2>/dev/null`; do
-	egrep '^#|^[^ ]*=[^;&]*'  "$HA_CONF_INCDIR/$conffile" >> "$HA_CONF_sec"
+    egrep '^#|^[^ ]*=[^;&]*'  "$HA_CONF_INCDIR/$conffile" >> "$HA_CONF_sec"
 done
 
 # Source/load the config
@@ -347,54 +347,54 @@ done
 
 # Older versions of pcs require "--name" before the cluster name.
 if grep -q "Red Hat Enterprise Linux Server release 6" /etc/issue; then
-	CLUSTER_NAME_OPTION="--name"
+    CLUSTER_NAME_OPTION="--name"
 fi
 
 case "${cmd}" in
-	setup | --setup)
-		logger "Setting up ${HA_NAME}"
-		check_cluster_exists ${HA_NAME}
-		determine_servers "setup"
+    setup | --setup)
+        logger "Setting up ${HA_NAME}"
+        check_cluster_exists ${HA_NAME}
+        determine_servers "setup"
 
-		if [ ${HA_NUM_SERVERS} -gt 1 ]; then
-#			setup_state_volume ${HA_SERVERS}
-			setup_cluster ${HA_NAME} ${HA_NUM_SERVERS} "${HA_SERVERS}"
-			setup_create_resources ${HA_SERVERS}
-		else
-			logger "Insufficient servers for HA, aborting"
-		fi
-		;;
-	teardown | --teardown)
-		logger "Tearing down ${HA_NAME}"
-		determine_servers "teardown"
-		teardown_cluster ${HA_NAME}
-		;;
-	add | --add)
-		node=${1}; shift
-		logger "adding ${node} to ${HA_NAME}"
-		pcs cluster node add ${node}
-		if [ $? -ne 0 ]; then
-			logger "warning: pcs cluster node add ${node} failed"
-		fi
-		pcs cluster start ${node}
-		if [ $? -ne 0 ]; then
-			logger "warning: pcs cluster start ${add_node} failed"
-		fi
-		;;
-	remove | --remove)
-		node=${1}; shift
-		logger "deleting ${node} from ${HA_NAME}"
-		pcs cluster node remove ${node}
-		if [ $? -ne 0 ]; then
-			logger "warning: pcs cluster node remove ${node} failed"
-		fi
-		;;
-	status | --status)
-		exec pcs status
-		;;
-	*)
-		echo "Usage: ganesha-ha.sh setup|teardown|add|remove|status"
-		;;
+        if [ ${HA_NUM_SERVERS} -gt 1 ]; then
+#            setup_state_volume ${HA_SERVERS}
+            setup_cluster ${HA_NAME} ${HA_NUM_SERVERS} "${HA_SERVERS}"
+            setup_create_resources ${HA_SERVERS}
+        else
+            logger "Insufficient servers for HA, aborting"
+        fi
+        ;;
+    teardown | --teardown)
+        logger "Tearing down ${HA_NAME}"
+        determine_servers "teardown"
+        teardown_cluster ${HA_NAME}
+        ;;
+    add | --add)
+        node=${1}; shift
+        logger "adding ${node} to ${HA_NAME}"
+        pcs cluster node add ${node}
+        if [ $? -ne 0 ]; then
+            logger "warning: pcs cluster node add ${node} failed"
+        fi
+        pcs cluster start ${node}
+        if [ $? -ne 0 ]; then
+            logger "warning: pcs cluster start ${add_node} failed"
+        fi
+        ;;
+    remove | --remove)
+        node=${1}; shift
+        logger "deleting ${node} from ${HA_NAME}"
+        pcs cluster node remove ${node}
+        if [ $? -ne 0 ]; then
+            logger "warning: pcs cluster node remove ${node} failed"
+        fi
+        ;;
+    status | --status)
+        exec pcs status
+        ;;
+    *)
+        echo "Usage: ganesha-ha.sh setup|teardown|add|remove|status"
+        ;;
 esac
 
 rm -rf $HA_CONF_secdir
