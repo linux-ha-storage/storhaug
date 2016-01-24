@@ -10,11 +10,11 @@ HA_SERVER="server1"
 
 # The set of nodes that forms the HA cluster.
 # Comma-deliminated IP/Hostname list
-HA_CLUSTER_NODES="server1,server2,..."
+HA_CLUSTER_NODES="server1,server2,server3,..."
 
 # [OPTIONAL] A subset of HA nodes that will serve as storage servers.
 # Comma-deliminated IP/Hostname list
-STORAGE_NODES="server2,..."
+STORAGE_NODES="server2,server3,..."
 
 # [OPTIONAL] Mount point for shared volumes used by HA resources.
 HA_MNT_DIR="/var/run/gluster"
@@ -22,6 +22,14 @@ HA_MNT_DIR="/var/run/gluster"
 # Virtual IPs of each of the nodes specified above.
 # Whitespace-deliminated IP address list
 HA_VIPS="10.x.x.x 10.x.x.x"
+
+# Deterministic Failover: If true, configures virtual IP failover to occur in
+# a deterministic order. The optional VIP_NODES setting specifies which node
+# will serve as the primary/home node for the corresponding virtual IP address.
+#   NOTE: These nodes should also be configured as storage nodes, either
+#         implicitly in HA_CLUSTER_NODES or explicitly in STORAGE_NODES
+DETERMINISTIC_FAILOVER=false
+VIP_NODES="server2,server3"
 
 # Managed access methods
 # Whitespace-delimited list. Valid values:
