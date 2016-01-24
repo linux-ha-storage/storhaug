@@ -59,6 +59,30 @@ usage()
     echo -e "  ${HA_CONF_INCDIR}*.conf"
 }
 
+storlog()
+{
+    LEVEL=$1; shift
+    case $LEVEL in
+        ERR|ERROR)
+        echo "ERROR: $1" >&2
+        logger --tag="storhaug" -p "daemon.err" "$1"
+        rm -rf $HA_CONF_secdir
+        exit 1
+        ;;
+        WARN|WARNING)
+        echo "WARNING: $1"
+        logger --tag="storhaug" -p "daemon.warn" "$1"
+        ;;
+        INFO)
+        echo "$1"
+        logger --tag="storhaug" -p "daemon.info" "$1"
+        ;;
+        DEBUG)
+        logger --tag="storhaug" -p "daemon.debug" "$1"
+        ;;
+    esac
+}
+
 ### Cluster functions
 
 check_cluster_exists()
@@ -69,8 +93,7 @@ check_cluster_exists()
     if [ -e /var/run/corosync.pid ]; then
         cluster_name=$(pcs status | grep "Cluster name:" | cut -d ' ' -f 3)
         if [ ${cluster_name} -a ${cluster_name} = ${name} ]; then
-            logger "Cluster $name already exists, exiting"
-            exit 0
+            storlog "ERR" "Cluster $name already exists, exiting"
         fi
     fi
 }
@@ -111,19 +134,11 @@ setup_cluster()
     local servers=${3}
     local unclean=""
 
-    logger "Setting up cluster ${name} on the following servers: ${servers}"
+    storlog "INFO" "Setting up cluster ${name} on the following servers: ${servers}"
 
     pcs cluster auth ${servers} -u hacluster -p ${HA_PASSWORD} --force
-    pcs cluster setup --force ${CLUSTER_NAME_OPTION} ${name} ${servers}
-    if [ $? -ne 0 ]; then
-        logger "pcs cluster setup ${CLUSTER_NAME_OPTION} ${name} ${servers} failed"
-        exit 1;
-    fi
-    pcs cluster start --all
-    if [ $? -ne 0 ]; then
-        logger "pcs cluster start failed"
-        exit 1;
-    fi
+    pcs cluster setup --force ${CLUSTER_NAME_OPTION} ${name} ${servers} || storlog "ERR" "Failed to setup cluster ${name}"
+    pcs cluster start --all || storlog "ERR" "Failed to start cluster ${name}"
 
     sleep 3
     unclean=$(pcs status | grep -u "UNCLEAN")
@@ -136,44 +151,31 @@ setup_cluster()
     local tmp_ifs=${IFS}
     IFS=$' '
     for server in ${STORAGE_SERVERS:-$HA_SERVERS} ; do
-        pcs property set --node $server role=storage
-        if [ $? -ne 0 ]; then
-            logger "warning: pcs property set --node $server role=storage failed"
-        fi
+        pcs property set --node $server role=storage || \
+          storlog "WARN" "Failed: pcs property set --node $server role=storage"
     done
     IFS=${tmp_ifs}
 
-    if [ ${num_servers} -lt 3 ]; then
-        pcs property set no-quorum-policy=ignore
-        if [ $? -ne 0 ]; then
-            logger "warning: pcs property set no-quorum-policy=ignore failed"
-        fi
+    if [ ${HA_NUM_SERVERS} -lt 3 ]; then
+        pcs property set no-quorum-policy=ignore || \
+          storlog "WARN" "Failed: pcs property set no-quorum-policy=ignore"
     fi
-    pcs property set stonith-enabled=false
-    if [ $? -ne 0 ]; then
-        logger "warning: pcs property set stonith-enabled=false failed"
-    fi
+    pcs property set stonith-enabled=false || storlog "WARN" "Failed: pcs property set stonith-enabled=false"
 }
 
 teardown_cluster()
 {
     local name=${1}
 
-    logger "Tearing down cluster $name"
+    storlog "INFO" "Tearing down cluster $name"
 
     for server in ${HA_SERVERS} ; do
         if [[ ${HA_CLUSTER_NODES} != *${server}* ]]; then
-            logger "info: ${server} is not in config, removing"
+            storlog "INFO" "${server} is not in config, removing"
 
-            pcs cluster stop ${server}
-            if [ $? -ne 0 ]; then
-                logger "Warning: pcs cluster stop ${server} failed"
-            fi
+            pcs cluster stop ${server} || storlog "WARN" "Failed: pcs cluster stop ${server}"
 
-            pcs cluster node remove ${server}
-            if [ $? -ne 0 ]; then
-                logger "warning: pcs cluster node remove ${server} failed"
-            fi
+            pcs cluster node remove ${server} || storlog "WARN" "Failed: pcs cluster node remove ${server}"
         fi
     done
 
@@ -185,19 +187,11 @@ teardown_cluster()
 # `cibadmin --delete --xml-text '<node id="$server"
 # uname="$server"/>'
 
-    pcs cluster stop --all
-    if [ $? -ne 0 ]; then
-        logger "warning pcs cluster stop --all failed"
-    fi
+    pcs cluster stop --all || storlog "WARN" "Failed to stop cluster ${name}"
 
-    pcs cluster destroy
-    if [ $? -ne 0 ]; then
-        logger "error pcs cluster destroy failed"
-        exit 1
-    fi
+    pcs cluster destroy || storlog "ERR" "Failed to destroy cluster ${name}"
 }
 
-### Resources functions
 
 setup_create_resources()
 {
@@ -226,12 +220,7 @@ setup_create_resources()
 #                       options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
 #               --clone ganesha_state-clone ganesha_state meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
-    pcs cluster cib-push ${cibfile}
-
-    if [ $? -ne 0 ]; then
-        logger "Failed to create filesystem resources."
-        exit 0
-    fi
+    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create filesystem resources."
 
     # CTDB
     pcs -f ${cibfile} resource create ctdb ocf:heartbeat:CTDB \
@@ -278,11 +267,7 @@ setup_create_resources()
 #    pcs -f ${cibfile} constraint colocation add ganesha-clone with ganesha_state-clone INFINITY
 #    pcs -f ${cibfile} constraint order ganesha_state-clone then ganesha-clone INFINITY
 #
-#    pcs cluster cib-push ${cibfile}
-#    if [ $? -ne 0 ]; then
-#        logger "Failed to create service resources."
-#        exit 0
-#    fi
+#    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create service resources."
 
     # Virtual IPs
     local ipcount=0
@@ -306,11 +291,8 @@ setup_create_resources()
 #        pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger
     done
 
-    pcs cluster cib-push ${cibfile}
-    if [ $? -ne 0 ]; then
-        logger "Failed to create virtual IP resources."
-        exit 0
-    fi
+    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create virtual IP resources."
+
     rm -f ${cibfile}
 }
 
@@ -380,7 +362,7 @@ fi
 
 case "${cmd}" in
     setup | --setup)
-        logger "Setting up ${HA_NAME}"
+        storlog "INFO" "Setting up ${HA_NAME}"
         check_cluster_exists ${HA_NAME}
         determine_servers "setup"
 
@@ -389,37 +371,27 @@ case "${cmd}" in
             setup_cluster ${HA_NAME} ${HA_NUM_SERVERS} "${HA_SERVERS}"
             setup_create_resources ${HA_SERVERS}
         else
-            logger "Insufficient servers for HA, aborting"
+            storlog "ERR" "Insufficient servers for HA, aborting"
         fi
         ;;
     teardown | --teardown)
-        logger "Tearing down ${HA_NAME}"
+        storlog "INFO" "Tearing down ${HA_NAME}"
         determine_servers "teardown"
         teardown_cluster ${HA_NAME}
         ;;
     add | --add)
         node=${1}; shift
-        logger "adding ${node} to ${HA_NAME}"
-        pcs cluster node add ${node}
-        if [ $? -ne 0 ]; then
-            logger "warning: pcs cluster node add ${node} failed"
-        fi
-        pcs cluster start ${node}
-        if [ $? -ne 0 ]; then
-            logger "warning: pcs cluster start ${add_node} failed"
-        fi
+        storlog "INFO" "Adding ${node} to ${HA_NAME}"
+        pcs cluster node add ${node} || storlog "WARN" "Failed: pcs cluster node add ${node}"
+        pcs cluster start ${node} || storlog "ERR" "Failed: pcs cluster start ${add_node}"
         ;;
     delete | --delete | remove | --remove)
         node=${1}; shift
         logger "deleting ${node} from ${HA_NAME}"
-        pcs cluster node remove ${node}
-        if [ $? -ne 0 ]; then
-            logger "warning: pcs cluster node remove ${node} failed"
-        fi
+        pcs cluster node remove ${node} || storlog "WARN" "Failed: pcs cluster node remove ${node}"
         ;;
     *)
-        echo -e "Unknown argument: ${cmd}\nFor help, run: `basename "$0"` -h"
-        logger "Unknown argument: ${cmd}"
+        storlog "ERR" "Unknown argument: ${cmd}"
         ;;
 esac
 
