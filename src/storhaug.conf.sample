@@ -16,6 +16,9 @@ HA_CLUSTER_NODES="server1,server2,..."
 # Comma-deliminated IP/Hostname list
 STORAGE_NODES="server2,..."
 
+# [OPTIONAL] Mount point for shared volumes used by HA resources.
+HA_MNT_DIR="/var/run/gluster"
+
 # Virtual IPs of each of the nodes specified above.
 # Whitespace-deliminated IP address list
 HA_VIPS="10.x.x.x 10.x.x.x"

@@ -4,3 +4,5 @@ HA_SMB_TYPE="glusterfs"
 # Shared volume hosting the CTDB reclock file.
 HA_SMB_VOL="ctdb"
 
+# [OPTIONAL] Mount point for shared volume.
+HA_SMB_MNT_DIR="lock"

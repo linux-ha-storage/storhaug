@@ -32,7 +32,9 @@ HA_NUM_SERVERS=0
 HA_SERVERS=""
 HA_CONF="%CONFDIR/sysconfig/storhaug.conf"
 HA_CONF_INCDIR="%CONFDIR/sysconfig/storhaug.d/"
-CLUSTER_NAME_OPTION=""
+HA_MNT_DIR="/var/run/gluster"
+HA_SMB_MNT_DIR="lock"
+HA_NFS_MNT_DIR="state"
 STORAGE_SERVERS=""
 STORAGE_NUM_SERVERS=0
 
@@ -114,6 +116,9 @@ determine_servers()
         IFS=${tmp_ifs}
         HA_NUM_SERVERS=${num_servers}
         HA_SERVERS="${ha_servers}"
+        # TODO: Determine storage servers from pcs status
+        STORAGE_SERVERS="${STORAGE_NODES//,/ }"
+        STORAGE_NUM_SERVERS=$(wc -w <<< "${STORAGE_SERVERS}")
     else
         IFS=$','
         for server in ${HA_CLUSTER_NODES} ; do
@@ -129,16 +134,13 @@ determine_servers()
 
 setup_cluster()
 {
-    local name=${1}
-    local num_servers=${2}
-    local servers=${3}
     local unclean=""
 
-    storlog "INFO" "Setting up cluster ${name} on the following servers: ${servers}"
+    storlog "INFO" "Setting up cluster ${HA_NAME} on the following servers: ${servers}"
 
-    pcs cluster auth ${servers} -u hacluster -p ${HA_PASSWORD} --force
-    pcs cluster setup --force ${CLUSTER_NAME_OPTION} ${name} ${servers} || storlog "ERR" "Failed to setup cluster ${name}"
-    pcs cluster start --all || storlog "ERR" "Failed to start cluster ${name}"
+    pcs cluster auth ${HA_SERVERS} -u hacluster -p ${HA_PASSWORD} --force
+    pcs cluster setup --force --name ${HA_NAME} ${HA_SERVERS} || storlog "ERR" "Failed to setup cluster ${HA_NAME}"
+    pcs cluster start --all || storlog "ERR" "Failed to start cluster ${HA_NAME}"
 
     sleep 3
     unclean=$(pcs status | grep -u "UNCLEAN")
@@ -200,11 +202,11 @@ setup_create_resources()
     pcs cluster cib ${cibfile}
 
     # Shared volumes
-    mkdir -p /gluster/lock
+    mkdir -p "${HA_MNT_DIR}/${HA_SMB_MNT_DIR}"
     pcs -f ${cibfile} resource create ctdb_lock ocf:heartbeat:Filesystem \
         params \
-            device="localhost:/$HA_SMB_VOL" \
-            directory="/gluster/lock" \
+            device="localhost:/${HA_SMB_VOL}" \
+            directory="${HA_MNT_DIR}/${HA_SMB_MNT_DIR}" \
             fstype="glusterfs" \
             options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
         --clone ctdb_lock-clone ctdb_lock meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
@@ -225,7 +227,7 @@ setup_create_resources()
     # CTDB
     pcs -f ${cibfile} resource create ctdb ocf:heartbeat:CTDB \
         params \
-            ctdb_recovery_lock="/gluster/lock/lockfile" \
+            ctdb_recovery_lock="${HA_MNT_DIR}/${HA_SMB_MNT_DIR}/lockfile" \
             ctdb_socket="/var/run/ctdb/ctdbd.socket" \
             ctdb_manages_winbind="no" \
             ctdb_manages_samba="no" \
@@ -272,7 +274,7 @@ setup_create_resources()
     # Virtual IPs
     local ipcount=0
     for ip in ${HA_VIPS}; do
-        ipcount=$(expr ${ipcount} + 1)
+        ((ipcount++))
         pcs -f ${cibfile} resource create vip${ipcount} ocf:heartbeat:IPaddr2 \
             params \
                 ip=${ip} \
@@ -355,11 +357,6 @@ done
 # Source/load the config
 . $HA_CONF_sec
 
-# Older versions of pcs require "--name" before the cluster name.
-if grep -q "Red Hat Enterprise Linux Server release 6" /etc/issue; then
-    CLUSTER_NAME_OPTION="--name"
-fi
-
 case "${cmd}" in
     setup | --setup)
         storlog "INFO" "Setting up ${HA_NAME}"
@@ -368,7 +365,7 @@ case "${cmd}" in
 
         if [ ${HA_NUM_SERVERS} -gt 1 ]; then
 #            setup_state_volume ${HA_SERVERS}
-            setup_cluster ${HA_NAME} ${HA_NUM_SERVERS} "${HA_SERVERS}"
+            setup_cluster
             setup_create_resources ${HA_SERVERS}
         else
             storlog "ERR" "Insufficient servers for HA, aborting"
