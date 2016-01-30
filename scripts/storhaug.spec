@@ -1,5 +1,5 @@
 %define major_version 0
-%define minor_version 8
+%define minor_version 9
 %define release 1%{?dist}
 
 Name: storhaug
@@ -148,6 +148,28 @@ fi
 
 
 %changelog
+* Fri Jan 29 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.9-1
+- Implement deterministic failover
+- Based on the version in ganesha-ha
+
+* Sun Jan 24 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.8-6
+- Remove uneccessary variables from setup_cluster()
+- Allow for configuration of GlusterFS mount points
+- Minor cleanups
+
+* Sat Jan 23 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.8-5
+- Add a logging function to streamline logging to syslog
+
+* Sat Jan 23 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.8-4
+- Largely cosmetic changes to bring storhaug more in line with Ganesha-HA
+
+* Sat Jan 23 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.8-3
+- Add an actual usage message under --help/-h
+
+* Wed Jan 20 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.8-2
+- Normalize whitespace in main storhaug file.
+- Change said file's mode to executable.
+
 * Mon Jan 18 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.8-1
 - Rename the project to storhaug
 - Remove CTDB RA from source

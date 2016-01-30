@@ -375,7 +375,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       end
       playbooks.push("playbooks/storhaug.yml")
       playbooks.each do |playbook|
-        node.vm.provision "ansible" do |ansible|
+        node.vm.provision :ansible do |ansible|
 #          ansible.verbose = "vvv"
           ansible.playbook = playbook
           ansible.groups = {}
