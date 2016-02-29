@@ -39,6 +39,8 @@ HA_NFS_MNT_DIR="state"
 STORAGE_SERVERS=""
 STORAGE_NUM_SERVERS=0
 DETERMINISTIC_FAILOVER=false
+SERVICE_MAN="DISTRO_NOT_FOUND"
+SECRET_PEM="/var/lib/glusterd/nfs/secret.pem"
 
 ### Utility functions
 
@@ -52,6 +54,7 @@ usage()
     echo -e "  status                Check the status of the cluster"
     echo -e "  setup                 Setup a new cluster"
     echo -e "  teardown              Teardown an existing cluster"
+    echo -e "  cleanup               Cleanup any existing cluster config"
     echo -e "  add                   Add a node to the cluster"
     echo -e "  delete, remove        Remove a node from the cluster"
     echo -e "\nCommand ARGUMENTS:"
@@ -96,7 +99,44 @@ storlog()
     esac
 }
 
-### Cluster functions
+sshdo()
+{
+  ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no -i ${SECRET_PEM} root@${1} -c "${2}"
+}
+
+scpdo()
+{
+  # avoid prompting for password, even with password-less scp
+  # scp $host1:$file $host2:$file prompts for the password
+  scp -3 -r -oPasswordAuthentication=no -oStrictHostKeyChecking=no -i ${SECRET_PEM} ${1} ${2}
+}
+
+determine_service_manager()
+{
+    if [ -e "/usr/bin/systemctl" ]; then
+        SERVICE_MAN="/usr/bin/systemctl"
+    elif [ -e "/sbin/invoke-rc.d" ]; then
+        SERVICE_MAN="/sbin/invoke-rc.d"
+    elif [ -e "/sbin/service" ]; then
+        SERVICE_MAN="/sbin/service"
+    else
+        storlog "ERR" "Service manager not recognized, exiting"
+    fi
+}
+
+manage_service()
+{
+    local action=${1}
+    local new_node=${2}
+    local service=${3}
+    if [ "$SERVICE_MAN" == "/usr/sbin/systemctl" ]; then
+        sshdo ${new_node} "$SERVICE_MAN ${action} ${service}"
+    else
+        sshdo ${new_node} "$SERVICE_MAN ${service} ${action}"
+    fi
+}
+
+### General cluster functions
 
 check_cluster_exists()
 {
@@ -131,9 +171,12 @@ determine_servers()
         if [[ "x${STORAGE_NODES}" != "x" ]]; then
             STORAGE_SERVERS="${STORAGE_NODES//,/ }"
             STORAGE_NUM_SERVERS=$(wc -w <<< "${STORAGE_SERVERS}")
+        else
+            STORAGE_SERVERS=${HA_SERVERS}
+            STORAGE_NUM_SERVERS=${HA_NUM_SERVERS}
         fi
-        if [[ "x${VIP_NODES}" != "x" ]]; then
-            VIP_SERVERS="${VIP_NODES//,/ }"
+        if [[ "x${HA_VIP_NODES}" != "x" ]]; then
+            VIP_SERVERS="${HA_VIP_NODES//,/ }"
         fi
     else
         IFS=$','
@@ -146,12 +189,124 @@ determine_servers()
         if [[ "x${STORAGE_NODES}" != "x" ]]; then
             STORAGE_SERVERS="${STORAGE_NODES//,/ }"
             STORAGE_NUM_SERVERS=$(wc -w <<< "${STORAGE_SERVERS}")
+        else
+            STORAGE_SERVERS=${HA_SERVERS}
+            STORAGE_NUM_SERVERS=${HA_NUM_SERVERS}
         fi
-        if [[ "x${VIP_NODES}" != "x" ]]; then
-            VIP_SERVERS="${VIP_NODES//,/ }"
+        if [[ "x${HA_VIP_NODES}" != "x" ]]; then
+            VIP_SERVERS="${HA_VIP_NODES//,/ }"
         fi
     fi
 }
+
+copy_config()
+{
+    local short_host=$(hostname -s)
+    local temp_conf=$(mktemp -u)
+
+    if [ -e ${SECRET_PEM} ]; then
+        while [[ ${1} ]]; do
+            current_host=`echo ${1} | cut -d "." -f 1`
+            if [ ${short_host} != ${current_host} ]; then
+                scpdo ${HA_CONF} ${1}:$(dirname ${HA_CONF})/
+                if [ $? -ne 0 ]; then
+                    logger "warning: scp to ${1} failed"
+                fi
+            fi
+            shift
+        done
+    else
+        logger "warning: scp to ${1} failed"
+    fi
+}
+
+copy_export_config()
+{
+    local new_node=${1}
+    scpdo ${HA_VOL_SERVER}:${GANESHA_CONF} ${new_node}:${GANESHA_CONF}
+    scpdo ${HA_VOL_SERVER}:${HA_CONFDIR}/exports ${new_node}:${HA_CONFDIR}/
+}
+
+### General resource functions
+
+clear_virt_ip_constraints()
+{
+    local cibfile=${1}; shift
+    pcs -f ${cibfile} constraint remove *vip* || \
+      storlog "WARN" "Failed: pcs constraint remove *vip*"
+}
+
+do_create_virt_ip_constraints()
+{
+    local cibfile=${1}; shift
+    local ipcount=${1}; shift
+    local primary=${1}; shift
+    local weight="1000"
+
+    # A set of location constraints to set the prefered order
+    # for where a VIP should move
+    while [[ ${1} ]]; do
+        pcs -f ${cibfile} constraint location vip${ipcount} prefers ${1}=${weight} || \
+          storlog "WARN" "Failed: pcs constraint location vip${ipcount} prefers ${1}=${weight}"
+        weight=$(expr ${weight} + 1000)
+        shift
+    done
+
+    # Set the highest preference for the VIP to its primary node
+    pcs -f ${cibfile} constraint location vip${ipcount} prefers ${primary}=${weight} || \
+      storlog "WARN" "Failed: pcs constraint location vip${ipcount} prefers ${primary}=${weight}"
+}
+
+create_virt_ip_constraints()
+{
+    local cibfile=${1}; shift
+    local ipcount=${1}; shift
+    local srvcount=${ipcount}
+    local primary=""
+    local head=""
+    local tail=""
+
+    # build a list of failover peers, e.g. for a four node cluster, for node1,
+    # the result is "node2 node3 node4"; for node2, "node3 node4 node1"
+    # and so on.
+    read -r -a servers <<< "${VIP_SERVERS:-STORAGE_SERVERS}"
+    while [ ${srvcount} -gt ${STORAGE_NUM_SERVERS} ]; do
+        srvcount=$((srvcount - STORAGE_NUM_SERVERS))
+    done
+    primary=${servers[${srvcount}-1]}
+    if [ ${STORAGE_NUM_SERVERS} -gt 1 ]; then
+        head=${servers[@]:${srvcount}-${STORAGE_NUM_SERVERS}-1}
+        tail=${servers[@]:${srvcount}}
+    fi
+
+    do_create_virt_ip_constraints ${cibfile} ${ipcount} ${primary} ${tail} ${head}
+}
+
+create_virt_ip()
+{
+    local cibfile=${1}; shift
+    local ipcount=${1}; shift
+    local ip=${1}; shift
+
+    pcs -f ${cibfile} resource create vip${ipcount} ocf:heartbeat:IPaddr2 \
+        params \
+            ip=${ip} \
+            flush_routes="true" \
+        op monitor interval=60s \
+        meta resource-stickiness="0"
+
+    pcs -f ${cibfile} constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
+
+    pcs -f ${cibfile} resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
+        params \
+            ip=${ip} \
+        meta resource-stickiness="0"
+
+    pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
+    pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger
+}
+
+### Setup functions
 
 setup_cluster()
 {
@@ -186,95 +341,6 @@ setup_cluster()
     pcs property set stonith-enabled=false || storlog "WARN" "Failed: pcs property set stonith-enabled=false"
 }
 
-teardown_cluster()
-{
-    local name=${1}
-
-    storlog "INFO" "Tearing down cluster $name"
-
-    for server in ${HA_SERVERS} ; do
-        if [[ ${HA_CLUSTER_NODES} != *${server}* ]]; then
-            storlog "INFO" "${server} is not in config, removing"
-
-            pcs cluster stop ${server} || storlog "WARN" "Failed: pcs cluster stop ${server}"
-
-            pcs cluster node remove ${server} || storlog "WARN" "Failed: pcs cluster node remove ${server}"
-        fi
-    done
-
-# BZ 1193433 - pcs doesn't reload cluster.conf after modification
-# after teardown completes, a subsequent setup will appear to have
-# 'remembered' the deleted node. You can work around this by
-# issuing another `pcs cluster node remove $node`,
-# `crm_node -f -R $server`, or
-# `cibadmin --delete --xml-text '<node id="$server"
-# uname="$server"/>'
-
-    pcs cluster stop --all || storlog "WARN" "Failed to stop cluster ${name}"
-
-    pcs cluster destroy || storlog "ERR" "Failed to destroy cluster ${name}"
-}
-
-### Resource functions
-
-do_create_virt_ip_constraints()
-{
-    local cibfile=${1}; shift
-    local ipcount=${1}; shift
-    local primary=${1}; shift
-    local weight="1000"
-
-    # A set of location constraints to set the prefered order
-    # for where a VIP should move
-    while [[ ${1} ]]; do
-        pcs -f ${cibfile} constraint location vip${ipcount} prefers ${1}=${weight} || \
-          storlog "WARN" "Failed: pcs constraint location vip${ipcount} prefers ${1}=${weight}"
-        weight=$(expr ${weight} + 1000)
-        shift
-    done
-
-    # Set the highest preference for the VIP to its primary node
-    pcs -f ${cibfile} constraint location vip${ipcount} prefers ${primary}=${weight} || \
-      storlog "WARN" "Failed: pcs constraint location vip${ipcount} prefers ${primary}=${weight}"
-}
-
-wrap_create_virt_ip_constraints()
-{
-    local cibfile=${1}; shift
-    local ipcount=${1}; shift
-    local srvcount=${ipcount}
-    local primary=""
-    local head=""
-    local tail=""
-
-    # build a list of failover peers, e.g. for a four node cluster, for node1,
-    # the result is "node2 node3 node4"; for node2, "node3 node4 node1"
-    # and so on.
-    read -r -a servers <<< "${VIP_SERVERS:-STORAGE_SERVERS}"
-    while [ ${srvcount} -gt ${STORAGE_NUM_SERVERS} ]; do
-        srvcount=$((srvcount - STORAGE_NUM_SERVERS))
-    done
-    primary=${servers[${srvcount}-1]}
-    if [ ${STORAGE_NUM_SERVERS} -gt 1 ]; then
-        head=${servers[@]:${srvcount}-${STORAGE_NUM_SERVERS}-1}
-        tail=${servers[@]:${srvcount}}
-    fi
-
-    do_create_virt_ip_constraints ${cibfile} ${ipcount} ${primary} ${tail} ${head}
-}
-
-create_virt_ip_constraints()
-{
-    local cibfile=${1}; shift
-    local ipcount=0
-
-    for ip in ${HA_VIPS}; do
-        ((ipcount++))
-        wrap_create_virt_ip_constraints ${cibfile} ${ipcount}
-        shift
-    done
-}
-
 setup_create_resources()
 {
     local cibfile=$(mktemp --tmpdir=$HA_CONF_secdir)
@@ -293,14 +359,16 @@ setup_create_resources()
 
     pcs -f ${cibfile} constraint location ctdb_lock-clone rule resource-discovery=exclusive score=0 role eq storage
 
-#    mkdir -p /gluster/state
-#    pcs -f ${cibfile} resource create ganesha_state ocf:heartbeat:Filesystem \
-#        params \
-#            device="localhost:/$HA_NFS_VOL" \
-#            directory="/gluster/state" \
-#            fstype="glusterfs" \
-#                       options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
-#               --clone ganesha_state-clone ganesha_state meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
+    mkdir -p "${HA_MNT_DIR}/${HA_NFS_MNT_DIR}"
+    pcs -f ${cibfile} resource create ganesha_state ocf:heartbeat:Filesystem \
+        params \
+            device="localhost:/${HA_NFS_VOL}" \
+            directory="${HA_MNT_DIR}/${HA_NFS_MNT_DIR}" \
+            fstype="glusterfs" \
+                       options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
+               --clone ganesha_state-clone ganesha_state meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
+
+    pcs -f ${cibfile} constraint location ganesha_state-clone rule resource-discovery=exclusive score=0 role eq storage
 
     pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create filesystem resources."
 
@@ -338,43 +406,30 @@ setup_create_resources()
     pcs -f ${cibfile} constraint order ctdb-clone then samba-group-clone INFINITY
 
     # Ganesha
-#    pcs -f ${cibfile} resource create ganesha ganesha \
-#        params \
-#            config="/etc/glusterfs-ganesha/nfs-ganesha.conf" \
-#        --clone ganesha-clone ganesha meta interleave="true" \
-#                                           globally-unique="false" \
-#                                           notify="true"
-#
-#    # Ganesha: We need our shared state FS
-#    pcs -f ${cibfile} constraint colocation add ganesha-clone with ganesha_state-clone INFINITY
-#    pcs -f ${cibfile} constraint order ganesha_state-clone then ganesha-clone INFINITY
-#
-#    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create service resources."
+    pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
+        params \
+            config="${SYS_CONFDIR}/glusterfs-ganesha/nfs-ganesha.conf" \
+        --clone nfs-ganesha-clone ganesha meta interleave="true" \
+                                           globally-unique="false" \
+                                           notify="true"
+
+    # Ganesha: We need our shared state FS
+    pcs -f ${cibfile} constraint colocation add nfs-ganesha-clone with ganesha_state-clone INFINITY
+    pcs -f ${cibfile} constraint order ganesha_state-clone then nfs-ganesha-clone INFINITY
+
+    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create service resources."
 
     # Virtual IPs
     local ipcount=0
     for ip in ${HA_VIPS}; do
         ((ipcount++))
-        pcs -f ${cibfile} resource create vip${ipcount} ocf:heartbeat:IPaddr2 \
-            params \
-                ip=${ip} \
-                flush_routes="true" \
-            op monitor interval=60s \
-            meta resource-stickiness="0"
-
-        pcs -f ${cibfile} constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
-
-#        pcs -f ${cibfile} resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
-#            params \
-#                ip=${ip} \
-#            meta resource-stickiness="0"
-#
-#        pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
-#        pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger
+        create_virt_ip ${cibfile} ${ipcount} ${ip}
     done
 
     if [[ ${DETERMINISTIC_FAILOVER} == true ]]; then
-        create_virt_ip_constraints ${cibfile}
+        for ((i=1;i<=${ipcount};i++)); do
+            create_virt_ip_constraints ${cibfile} ${i}
+        done
     fi
 
     pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create virtual IP resources."
@@ -382,31 +437,50 @@ setup_create_resources()
     rm -f ${cibfile}
 }
 
-### Shared state
-
 setup_state_volume()
 {
     local mnt=$(mktemp -d --tmpdir=$HA_CONF_secdir)
     local longname=""
     local shortname=""
     local dname=""
+    local dirname=""
 
     mount -t glusterfs ${HA_SERVER}:/${HA_NFS_VOL} ${mnt}
+    mkdir -p ${mnt}/nfs-ganesha
 
     longname=$(hostname)
     dname=${longname#$(hostname -s)}
 
-    while [[ ${1} ]]; do
-        mkdir -p ${mnt}/${1}${dname}/nfs/ganesha/v4recov
-        mkdir -p ${mnt}/${1}${dname}/nfs/ganesha/v4old
-        mkdir -p ${mnt}/${1}${dname}/nfs/statd/sm
-        mkdir -p ${mnt}/${1}${dname}/nfs/statd/sm.bak
-        mkdir -p ${mnt}/${1}${dname}/nfs/statd/state
-        touch ${mnt}/${1}${dname}/nfs/state
+    for srv in ${STORAGE_SERVERS:-HA_SERVERS}; do
+
+        if [[ ${srv} == *${dname} ]]; then
+            dirname=${srv}
+        else
+            dirname=${srv}${dname}
+        fi
+
+        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4recov ]; then
+            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4recov
+        fi
+        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4old ]; then
+            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4old
+        fi
+        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm ]; then
+            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm
+        fi
+        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm.bak ]; then
+            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm.bak
+        fi
+        if [ ! -e ${mnt}/nfs-ganesha/${dirname}/nfs/state ]; then
+            touch ${mnt}/nfs-ganesha/${dirname}/nfs/state
+        fi
+        if [ ! -e ${mnt}/nfs-ganesha/${dirname}/nfs/statd/state ]; then
+            touch ${mnt}/nfs-ganesha/${dirname}/nfs/statd/state
+        fi
         for server in ${HA_SERVERS} ; do
-            if [ ${server} != ${1}${dname} ]; then
-                ln -s ${mnt}/${server}/nfs/ganesha ${mnt}/${1}${dname}/nfs/ganesha/${server}
-                ln -s ${mnt}/${server}/nfs/statd ${mnt}/${1}${dname}/nfs/statd/${server}
+            if [ ${server} != ${dirname} ]; then
+                ln -sf ${mnt}/nfs-ganesha/${server}/nfs/ganesha ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/${server}
+                ln -sf ${mnt}/nfs-ganesha/${server}/nfs/statd ${mnt}/nfs-ganesha/${dirname}/nfs/statd/${server}
             fi
         done
         shift
@@ -414,6 +488,191 @@ setup_state_volume()
 
     umount ${mnt}
     rmdir ${mnt}
+}
+
+### Teardown functions
+
+teardown_cluster()
+{
+    local name=${1}
+
+    storlog "INFO" "Tearing down cluster $name"
+
+    for server in ${HA_SERVERS} ; do
+        if [[ ${HA_CLUSTER_NODES} != *${server}* ]]; then
+            storlog "INFO" "${server} is not in config, removing"
+
+            pcs cluster stop ${server} || storlog "WARN" "Failed: pcs cluster stop ${server}"
+
+            pcs cluster node remove ${server} || storlog "WARN" "Failed: pcs cluster node remove ${server}"
+        fi
+    done
+
+# BZ 1193433 - pcs doesn't reload cluster.conf after modification
+# after teardown completes, a subsequent setup will appear to have
+# 'remembered' the deleted node. You can work around this by
+# issuing another `pcs cluster node remove $node`,
+# `crm_node -f -R $server`, or
+# `cibadmin --delete --xml-text '<node id="$server"
+# uname="$server"/>'
+
+    pcs cluster stop --all || storlog "WARN" "Failed to stop cluster ${name}"
+
+    pcs cluster destroy || storlog "ERR" "Failed to destroy cluster ${name}"
+}
+
+### Cleanup functions
+
+cleanup_ganesha_config()
+{
+       rm -rf ${HA_CONF_INCDIR}/exports/*.conf
+       rm -rf ${HA_CONF_INCDIR}/.export_added
+       rm -rf ${SYS_CONFDIR}/cluster/cluster.conf*
+       rm -rf /var/lib/pacemaker/cib/*
+       sed -r -i -e '/^%include[[:space:]]+".+\.conf"$/d' ${GANESHA_CONF}
+}
+
+### AddNode functions
+
+addnode()
+{
+    local node=${1}; shift
+    local vip=${1}; shift
+    local role=${1}; shift
+
+    #TODO: Improve log message
+    storlog "INFO" "Adding node ${node} to ${HA_NAME}"
+
+    HA_CLUSTER_NODES="$HA_CLUSTER_NODES,$node"
+    if [ "x${vip}" != "x" ]; then
+        HA_VIPS="${HA_VIPS} ${vip}"
+        if [[ ${DETERMINISTIC_FAILOVER} == true && "x${HA_VIP_NODES}" != "x" ]]; then
+            HA_VIP_NODES="${HA_VIP_NODES},${node}"
+        fi
+    fi
+    if [ "${role}" == *storage* ]; then
+        STORAGE_NODES="$STORAGE_NODES,$node"
+    fi
+    determine_servers "add"
+
+    copy_export_config ${node} ${HA_CONFDIR}
+    pcs cluster node add ${node} || storlog "WARN" "Failed: pcs cluster node add ${node}"
+    pcs cluster start ${node} || storlog "ERR" "Failed: pcs cluster start ${node}"
+
+    pcs cluster cib ${cibfile}
+
+    local ipcount=$(wc -w <<< "${HA_VIPS}")
+    ((ipcount++))
+    create_virt_ip ${cibfile} ${ipcount} ${vip}
+
+    if [[ ${DETERMINISTIC_FAILOVER} == true ]]; then
+        clear_virt_ip_constraints ${cibfile}
+        for ((i=1;i<=${ipcount};i++)); do
+            create_virt_ip_constraints ${cibfile} ${i}
+        done
+    fi
+
+    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to add virtual IP resources."
+
+    sed -i "s/\\(HA_CLUSTER_NODES=\\).*/\\1\"${HA_CLUSTER_NODES}\"/" ${HA_CONF}
+    if [ "x${vip}" != "x" ]; then
+        sed -i "s/\\(HA_VIPS=\\).*/\\1\"${HA_VIPS}\"/" ${HA_CONF}
+        if [[ ${DETERMINISTIC_FAILOVER} == true && "x${HA_VIP_NODES}" != "x" ]]; then
+            sed -i "s/\\(HA_VIP_NODES=\\).*/\\1\"${HA_VIP_NODES}\"/" ${HA_CONF}
+        fi
+    fi
+    if [ "${role}" == *storage* ]; then
+        if grep -q STORAGE_NODES ${HA_CONF}; then
+            sed -i "s/\\(STORAGE_NODES=\\).*/\\1\"${STORAGE_NODES}\"/" ${HA_CONF}
+        else
+            echo "STORAGE_NODES=\"${STORAGE_NODES}\"" >> ${HA_CONF}
+        fi
+    fi
+}
+
+### DeleteNode functions
+
+deletenode()
+{
+    local node=${1}; shift
+
+    storlog "INFO" "Deleting node ${node} from ${HA_NAME}"
+
+    HA_CLUSTER_NODES="${HA_CLUSTER_NODES//$node}"
+    if [[ ${DETERMINISTIC_FAILOVER} == true && "x${HA_VIP_NODES}" != "x" ]]; then
+        HA_VIP_NODES="${HA_VIP_NODES//$node}"
+    fi
+    if [[ "x${STORAGE_NODES}" != "x" ]]; then
+        STORAGE_NODES="${STORAGE_NODES//$node}"
+    fi
+    determine_servers "delete"
+
+    copy_export_config ${node} ${HA_CONFDIR}
+    pcs cluster node remove ${node} || storlog "ERR" "Failed: pcs cluster node remove ${node}"
+
+    if [[ ${DETERMINISTIC_FAILOVER} == true ]]; then
+        pcs cluster cib ${cibfile}
+        local ipcount=$(wc -w <<< "${HA_VIPS}")
+        ((ipcount++))
+        clear_virt_ip_constraints ${cibfile}
+        for ((i=1;i<=${ipcount};i++)); do
+            create_virt_ip_constraints ${cibfile} ${i}
+        done
+        pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to refresh deterministic failover."
+    fi
+
+    sed -i "s/\\(HA_CLUSTER_NODES=\\).*/\\1\"${HA_CLUSTER_NODES}\"/" ${HA_CONF}
+    if [[ ${DETERMINISTIC_FAILOVER} == true && "x${HA_VIP_NODES}" != "x" ]]; then
+        sed -i "s/\\(HA_VIP_NODES=\\).*/\\1\"${HA_VIP_NODES}\"/" ${HA_CONF}
+    fi
+    if grep -q STORAGE_NODES ${HA_CONF}; then
+        sed -i "s/\\(STORAGE_NODES=\\).*/\\1\"${STORAGE_NODES}\"/" ${HA_CONF}
+    fi
+}
+
+### Refresh functions
+
+refresh_config()
+{
+        local short_host=$(hostname -s)
+        local VOL=${1}
+        local HA_CONFDIR=${2}
+
+        removed_id=`cat $HA_CONFDIR/exports/export.$VOL.conf |\
+grep Export_Id | cut -d " " -f8`
+
+        if [ -e ${SECRET_PEM} ]; then
+        while [[ ${3} ]]; do
+            current_host=`echo ${3} | cut -d "." -f 1`
+            if [ ${short_host} != ${current_host} ]; then
+                 scpdo ${HA_CONFDIR}/exports/export.$VOL.conf ${current_host}:${HA_CONFDIR}/exports/
+                 sshdo ${current_host} "dbus-send --print-reply --system \
+--dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr \
+org.ganesha.nfsd.exportmgr.RemoveExport uint16:$removed_id"
+                 sleep 1
+                 sshdo ${current_host} "dbus-send  --system \
+--dest=org.ganesha.nfsd  /org/ganesha/nfsd/ExportMgr \
+org.ganesha.nfsd.exportmgr.AddExport  string:$HA_CONFDIR/exports/export.$VOL.conf \
+string:\"EXPORT(Path=/$VOL)\""
+               if [ $? -ne 0 ]; then
+                    echo "warning: refresh-config failed on ${current_host}"
+               fi
+            fi
+            shift
+        done
+        else
+            echo "warning: refresh-config failed on ${1}"
+        fi
+
+	#Run the same command on the localhost,
+        dbus-send --print-reply --system \
+--dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr \
+org.ganesha.nfsd.exportmgr.RemoveExport uint16:$removed_id
+        sleep 1
+        dbus-send  --system \
+--dest=org.ganesha.nfsd  /org/ganesha/nfsd/ExportMgr \
+org.ganesha.nfsd.exportmgr.AddExport  string:$HA_CONFDIR/exports/export.$VOL.conf \
+string:"EXPORT(Path=/$VOL)"
 }
 
 ### Mainline
@@ -450,9 +709,10 @@ case "${cmd}" in
         determine_servers "setup"
 
         if [ ${HA_NUM_SERVERS} -gt 1 ]; then
-#            setup_state_volume ${HA_SERVERS}
+            setup_state_volume
             setup_cluster
-            setup_create_resources ${HA_SERVERS}
+            setup_create_resources
+            copy_config ${HA_SERVERS}
         else
             storlog "ERR" "Insufficient servers for HA, aborting"
         fi
@@ -462,16 +722,20 @@ case "${cmd}" in
         determine_servers "teardown"
         teardown_cluster ${HA_NAME}
         ;;
+    cleanup | --cleanup)
+        cleanup_ganesha_config
+        ;;
     add | --add)
         node=${1}; shift
-        storlog "INFO" "Adding ${node} to ${HA_NAME}"
-        pcs cluster node add ${node} || storlog "WARN" "Failed: pcs cluster node add ${node}"
-        pcs cluster start ${node} || storlog "ERR" "Failed: pcs cluster start ${add_node}"
+        vip=${1}; shift
+        role=${1}; shift
+        addnode ${node} ${vip} ${role}
+        copy_config ${HA_SERVERS}
         ;;
     delete | --delete | remove | --remove)
         node=${1}; shift
-        logger "deleting ${node} from ${HA_NAME}"
-        pcs cluster node remove ${node} || storlog "WARN" "Failed: pcs cluster node remove ${node}"
+        deletenode ${node}
+        copy_config ${HA_SERVERS}
         ;;
     *)
         storlog "ERR" "Unknown argument: ${cmd}"

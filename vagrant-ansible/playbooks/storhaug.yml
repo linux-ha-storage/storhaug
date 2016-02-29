@@ -186,6 +186,6 @@
     - name: Teardown any pre-existing cluster.
       shell: pcs cluster stop; pcs cluster destroy
 
-    - name: Start Storhaug
-      shell: storhaug setup
-      run_once: true
+#    - name: Start Storhaug
+#      shell: storhaug setup
+#      run_once: true
