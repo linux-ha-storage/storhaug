@@ -1,5 +1,5 @@
 %define major_version 0
-%define minor_version 9
+%define minor_version 10
 %define release 1%{?dist}
 
 Name: storhaug
@@ -148,6 +148,14 @@ fi
 
 
 %changelog
+* Mon Feb 29 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.10-1
+- Major reorganization of main script file
+- Provide HA for NFS-Ganesha, based on ganesha-ha
+
+* Mon Feb 29 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.9-2
+- Rename some variables and examples
+- Label service feature unimplemented
+
 * Fri Jan 29 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.9-1
 - Implement deterministic failover
 - Based on the version in ganesha-ha
