@@ -29,9 +29,9 @@ HA_VIPS="10.x.x.x 10.x.x.x"
 #   NOTE: These nodes should also be configured as storage nodes, either
 #         implicitly in HA_CLUSTER_NODES or explicitly in STORAGE_NODES
 DETERMINISTIC_FAILOVER=false
-VIP_NODES="server2,server3"
+HA_VIP_NODES="server2,server3"
 
-# Managed access methods
+# [NOT IMPLEMENTED YET] Managed access methods
 # Whitespace-delimited list. Valid values:
 #   nfs
 #   smb

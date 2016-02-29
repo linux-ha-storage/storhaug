@@ -30,8 +30,9 @@
 
 HA_NUM_SERVERS=0
 HA_SERVERS=""
-HA_CONF="%CONFDIR/sysconfig/storhaug.conf"
-HA_CONF_INCDIR="%CONFDIR/sysconfig/storhaug.d/"
+SYS_CONFDIR="/etc"
+HA_CONF="${SYS_CONFDIR}/sysconfig/storhaug.conf"
+HA_CONF_INCDIR="${SYS_CONFDIR}/sysconfig/storhaug.d/"
 HA_MNT_DIR="/var/run/gluster"
 HA_SMB_MNT_DIR="lock"
 HA_NFS_MNT_DIR="state"

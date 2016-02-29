@@ -8,3 +8,4 @@ active_vms.yaml
 vagrant.yaml*
 vagrant.yml*
 host_vars/
+tags

@@ -2,7 +2,7 @@
 HA_NFS_TYPE="glusterfs"
 
 # Shared volume to store NFS state.
-HA_NFS_VOL="ganesha"
+HA_NFS_VOL="state"
 
 # [OPTIONAL] Mount point for shared volume.
-HA_NFS_MNT_DIR="lock"
+HA_NFS_MNT_DIR="state"
