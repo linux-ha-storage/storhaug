@@ -26,8 +26,12 @@
 #######################################################################
 # Initialization:
 
-: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
-. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+if [ -n "${OCF_DEBUG_LIBRARY}" ]; then
+        . ${OCF_DEBUG_LIBRARY}
+else
+        : ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+        . ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+fi
 
 #######################################################################
 

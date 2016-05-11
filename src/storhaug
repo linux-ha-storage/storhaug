@@ -12,19 +12,21 @@
 
 HA_NUM_SERVERS=0
 HA_SERVERS=""
-SYS_CONFDIR="/etc"
-HA_CONF="${SYS_CONFDIR}/sysconfig/storhaug.conf"
-HA_CONF_INCDIR="${SYS_CONFDIR}/sysconfig/storhaug.d/"
-HA_MNT_DIR="/var/run/gluster"
+SYS_CONFDIR="/etc/sysconfig"
+HA_CONF="${SYS_CONFDIR}/storhaug.conf"
+HA_CONF_INCDIR="${SYS_CONFDIR}/storhaug.d"
+HA_MNT_DIR="/var/run/storhaug"
 HA_SMB_MNT_DIR="lock"
 HA_NFS_MNT_DIR="state"
 STORAGE_SERVERS=""
 STORAGE_NUM_SERVERS=0
 DETERMINISTIC_FAILOVER=false
 SERVICE_MAN="DISTRO_NOT_FOUND"
-SECRET_PEM="/var/lib/glusterd/nfs/secret.pem"
+SECRET_PEM="${HA_CONF_INCDIR}/secret.pem"
 
 ### Utility functions
+
+_hostname=$(hostname)
 
 usage()
 {
@@ -36,7 +38,8 @@ usage()
     echo -e "  status                Check the status of the cluster"
     echo -e "  setup                 Setup a new cluster"
     echo -e "  teardown              Teardown an existing cluster"
-    echo -e "  cleanup               Cleanup any existing cluster config"
+    echo -e "  cleanup               Cleanup local cluster config"
+    echo -e "  cleanup-all           Cleanup cluster config on all nodes"
     echo -e "  add                   Add a node to the cluster"
     echo -e "  delete, remove        Remove a node from the cluster"
     echo -e "\nCommand ARGUMENTS:"
@@ -45,7 +48,7 @@ usage()
     echo -e "  delete <NODE>         Synonym for 'remove'"
     echo -e "\n\nConfiguration is read from the following locations:"
     echo -e "  ${HA_CONF}"
-    echo -e "  ${HA_CONF_INCDIR}*.conf"
+    echo -e "  ${HA_CONF_INCDIR}/*.conf"
 }
 
 parsebool()
@@ -83,39 +86,30 @@ storlog()
 
 sshdo()
 {
-  ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no -i ${SECRET_PEM} root@${1} -c "${2}"
+    if [ "${_hostname}" == "${1}" ] || \
+       [ "${_hostname%%.*}" == "${1%%.*}" ] || \
+       [ "localhost" == "${1}" ]; then
+        ${2}
+    else
+        ssh -oPasswordAuthentication=no -oStrictHostKeyChecking=no -i ${SECRET_PEM} root@${1} "${2}"
+    fi
+    local _ret=$?
+    if [ $_ret -ne 0 ]; then
+        storlog "WARN" "Command failed on ${1}: ${2}"
+    fi
+    return $_ret
 }
 
 scpdo()
 {
-  # avoid prompting for password, even with password-less scp
-  # scp $host1:$file $host2:$file prompts for the password
-  scp -3 -r -oPasswordAuthentication=no -oStrictHostKeyChecking=no -i ${SECRET_PEM} ${1} ${2}
-}
-
-determine_service_manager()
-{
-    if [ -e "/usr/bin/systemctl" ]; then
-        SERVICE_MAN="/usr/bin/systemctl"
-    elif [ -e "/sbin/invoke-rc.d" ]; then
-        SERVICE_MAN="/sbin/invoke-rc.d"
-    elif [ -e "/sbin/service" ]; then
-        SERVICE_MAN="/sbin/service"
-    else
-        storlog "ERR" "Service manager not recognized, exiting"
+    # avoid prompting for password, even with password-less scp
+    # scp $host1:$file $host2:$file prompts for the password
+    scp -3 -r -oPasswordAuthentication=no -oStrictHostKeyChecking=no -i ${SECRET_PEM} ${1} ${2}
+    local _ret=$?
+    if [ $_ret -ne 0 ]; then
+        storlog "WARN" "SCP failed from ${1} to ${2}"
     fi
-}
-
-manage_service()
-{
-    local action=${1}
-    local new_node=${2}
-    local service=${3}
-    if [ "$SERVICE_MAN" == "/usr/sbin/systemctl" ]; then
-        sshdo ${new_node} "$SERVICE_MAN ${action} ${service}"
-    else
-        sshdo ${new_node} "$SERVICE_MAN ${service} ${action}"
-    fi
+    return $_ret
 }
 
 ### General cluster functions
@@ -123,10 +117,9 @@ manage_service()
 check_cluster_exists()
 {
     local name=${1}
-    local cluster_name=""
 
     if [ -e /var/run/corosync.pid ]; then
-        cluster_name=$(pcs status | grep "Cluster name:" | cut -d ' ' -f 3)
+        local cluster_name=$(pcs status | grep "Cluster name:" | cut -d ' ' -f 3)
         if [ ${cluster_name} -a ${cluster_name} = ${name} ]; then
             storlog "ERR" "Cluster $name already exists, exiting"
         fi
@@ -138,10 +131,9 @@ determine_servers()
     local cmd=${1}
     local num_servers=0
     local tmp_ifs=${IFS}
-    local ha_servers=""
 
     if [[ "X${cmd}X" != "XsetupX" ]]; then
-        ha_servers=$(pcs status | grep "Online:" | grep -o '\[.*\]' | sed -e 's/\[//' | sed -e 's/\]//')
+        local ha_servers=$(pcs status | grep "Online:" | grep -o '\[.*\]' | sed -e 's/\[//' | sed -e 's/\]//')
         IFS=$' '
         for server in ${ha_servers} ; do
             num_servers=$(expr ${num_servers} + 1)
@@ -183,23 +175,13 @@ determine_servers()
 
 copy_config()
 {
-    local short_host=$(hostname -s)
-    local temp_conf=$(mktemp -u)
-
-    if [ -e ${SECRET_PEM} ]; then
-        while [[ ${1} ]]; do
-            current_host=`echo ${1} | cut -d "." -f 1`
-            if [ ${short_host} != ${current_host} ]; then
-                scpdo ${HA_CONF} ${1}:$(dirname ${HA_CONF})/
-                if [ $? -ne 0 ]; then
-                    logger "warning: scp to ${1} failed"
-                fi
-            fi
-            shift
-        done
-    else
-        logger "warning: scp to ${1} failed"
-    fi
+    while [[ ${1} ]]; do
+        if [ ${_hostname%%.*} != ${1%%.*} ]; then
+            scpdo ${HA_CONF} ${1}:$(dirname ${HA_CONF})/
+            scpdo ${HA_CONF_INCDIR} ${1}:$(dirname ${HA_CONF_INCDIR})/
+        fi
+        shift
+    done
 }
 
 copy_export_config()
@@ -423,20 +405,17 @@ setup_create_resources()
 setup_state_volume()
 {
     local mnt=$(mktemp -d --tmpdir=$HA_CONF_secdir)
-    local longname=""
-    local shortname=""
     local dname=""
     local dirname=""
 
     mount -t glusterfs ${HA_SERVER}:/${HA_NFS_VOL} ${mnt}
     mkdir -p ${mnt}/nfs-ganesha
 
-    longname=$(hostname)
-    dname=${longname#$(hostname -s)}
+    dname=${_hostname#*.}
 
     for srv in ${STORAGE_SERVERS:-HA_SERVERS}; do
 
-        if [[ ${srv} == *${dname} ]]; then
+        if [[ "${srv}" == *${dname} ]]; then
             dirname=${srv}
         else
             dirname=${srv}${dname}
@@ -477,16 +456,10 @@ setup_state_volume()
 
 teardown_cluster()
 {
-    local name=${1}
-
-    storlog "INFO" "Tearing down cluster $name"
-
     for server in ${HA_SERVERS} ; do
         if [[ ${HA_CLUSTER_NODES} != *${server}* ]]; then
             storlog "INFO" "${server} is not in config, removing"
-
             pcs cluster stop ${server} || storlog "WARN" "Failed: pcs cluster stop ${server}"
-
             pcs cluster node remove ${server} || storlog "WARN" "Failed: pcs cluster node remove ${server}"
         fi
     done
@@ -494,10 +467,12 @@ teardown_cluster()
 # BZ 1193433 - pcs doesn't reload cluster.conf after modification
 # after teardown completes, a subsequent setup will appear to have
 # 'remembered' the deleted node. You can work around this by
-# issuing another `pcs cluster node remove $node`,
-# `crm_node -f -R $server`, or
-# `cibadmin --delete --xml-text '<node id="$server"
-# uname="$server"/>'
+# issuing another
+#   pcs cluster node remove $node
+#  or
+#   crm_node -f -R $server
+#  or
+#   cibadmin --delete --xml-text '<node id="$server" uname="$server"/>
 
     pcs cluster stop --all || storlog "WARN" "Failed to stop cluster ${name}"
 
@@ -506,13 +481,13 @@ teardown_cluster()
 
 ### Cleanup functions
 
-cleanup_ganesha_config()
+cleanup_config()
 {
-       rm -rf ${HA_CONF_INCDIR}/exports/*.conf
-       rm -rf ${HA_CONF_INCDIR}/.export_added
-       rm -rf ${SYS_CONFDIR}/cluster/cluster.conf*
-       rm -rf /var/lib/pacemaker/cib/*
-       sed -r -i -e '/^%include[[:space:]]+".+\.conf"$/d' ${GANESHA_CONF}
+    local _cmd='eval "rm -rf ${SYS_CONFDIR}/cluster/cluster.conf*; \
+rm -rf /var/lib/pacemaker/cib/*; \
+rm -rf ${HA_NFS_EXPDIR}/*.conf; \
+sed -r -i -e '"'"'/^%include[[:space:]]+\".+\\.conf\"$/d'"'"' ${HA_NFS_CONF}"'
+    sshdo "${1}" "${_cmd}"
 }
 
 ### AddNode functions
@@ -668,8 +643,6 @@ elif [[ ${cmd} == *status ]]; then
     exec pcs status
     exit 0
 fi
-node=""
-vip=""
 
 HA_CONF_secdir=$(mktemp -d --tmpdir "$(basename $0).XXXXXXXXXX")
 HA_CONF_sec="$HA_CONF_secdir/sec.conf"
@@ -722,10 +695,15 @@ case "${cmd}" in
     teardown | --teardown)
         storlog "INFO" "Tearing down ${HA_NAME}"
         determine_servers "teardown"
-        teardown_cluster ${HA_NAME}
+        teardown_cluster
         ;;
     cleanup | --cleanup)
-        cleanup_ganesha_config
+        cleanup_config $_host
+        ;;
+    cleanup-all | --cleanup-all)
+        for server in ${HA_SERVERS}; do
+            cleanup_config $server
+        done
         ;;
     add | --add)
         node=${1}; shift

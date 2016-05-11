@@ -1,6 +1,7 @@
 #!/bin/sh
 #
 # Copyright (c) 2014 David Vossel <dvossel@redhat.com>
+# Copyright (c) 2015 Jose A. Rivera <jarrpa@redhat.com>
 #					All Rights Reserved.
 #
 # This program is free software; you can redistribute it and/or modify
@@ -26,8 +27,12 @@
 #######################################################################
 # Initialization:
 
-: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
-. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+if [ -n "${OCF_DEBUG_LIBRARY}" ]; then
+        . ${OCF_DEBUG_LIBRARY}
+else
+        : ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+        . ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+fi
 
 #######################################################################
 
