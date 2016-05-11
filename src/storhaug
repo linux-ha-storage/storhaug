@@ -498,52 +498,56 @@ addnode()
     local vip=${1}; shift
     local role=${1}; shift
 
-    #TODO: Improve log message
     storlog "INFO" "Adding node ${node} to ${HA_NAME}"
 
     HA_CLUSTER_NODES="$HA_CLUSTER_NODES,$node"
+    if [ "${role}" == *storage* ]; then
+        STORAGE_NODES="$STORAGE_NODES,$node"
+    fi
     if [ "x${vip}" != "x" ]; then
         HA_VIPS="${HA_VIPS} ${vip}"
         if [[ ${DETERMINISTIC_FAILOVER} == true && "x${HA_VIP_NODES}" != "x" ]]; then
             HA_VIP_NODES="${HA_VIP_NODES},${node}"
         fi
     fi
-    if [ "${role}" == *storage* ]; then
-        STORAGE_NODES="$STORAGE_NODES,$node"
-    fi
     determine_servers "add"
 
-    copy_export_config ${node} ${HA_CONFDIR}
     pcs cluster node add ${node} || storlog "WARN" "Failed: pcs cluster node add ${node}"
     pcs cluster start ${node} || storlog "ERR" "Failed: pcs cluster start ${node}"
 
-    pcs cluster cib ${cibfile}
-
-    local ipcount=$(wc -w <<< "${HA_VIPS}")
-    ((ipcount++))
-    create_virt_ip ${cibfile} ${ipcount} ${vip}
-
-    if [[ ${DETERMINISTIC_FAILOVER} == true ]]; then
-        clear_virt_ip_constraints ${cibfile}
-        for ((i=1;i<=${ipcount};i++)); do
-            create_virt_ip_constraints ${cibfile} ${i}
-        done
+    if [ "${role}" == *storage* ]; then
+        pcs property set --node ${node} role=storage || \
+          storlog "WARN" "Failed: pcs property set --node ${node} role=storage"
     fi
 
-    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to add virtual IP resources."
+    if [ "x${vip}" != "x" ]; then
+        local cibfile=$(mktemp --tmpdir=$HA_CONF_secdir)
+        pcs cluster cib ${cibfile}
+
+        local ipcount=$(wc -w <<< "${HA_VIPS}")
+        create_virt_ip ${cibfile} ${ipcount} ${vip}
+        if [[ ${DETERMINISTIC_FAILOVER} == true ]]; then
+            clear_virt_ip_constraints ${cibfile}
+            for ((i=1;i<=${ipcount};i++)); do
+                create_virt_ip_constraints ${cibfile} ${i}
+            done
+        fi
+        pcs cluster cib-push ${cibfile} || \
+          storlog "ERR" "Failed to add virtual IP resources."
+    fi
 
     sed -i "s/\\(HA_CLUSTER_NODES=\\).*/\\1\"${HA_CLUSTER_NODES}\"/" ${HA_CONF}
-    if [ "x${vip}" != "x" ]; then
-        sed -i "s/\\(HA_VIPS=\\).*/\\1\"${HA_VIPS}\"/" ${HA_CONF}
-        if [[ ${DETERMINISTIC_FAILOVER} == true && "x${HA_VIP_NODES}" != "x" ]]; then
-            sed -i "s/\\(HA_VIP_NODES=\\).*/\\1\"${HA_VIP_NODES}\"/" ${HA_CONF}
-        fi
-    fi
     if [ "${role}" == *storage* ]; then
         if grep -q STORAGE_NODES ${HA_CONF}; then
             sed -i "s/\\(STORAGE_NODES=\\).*/\\1\"${STORAGE_NODES}\"/" ${HA_CONF}
         else
             echo "STORAGE_NODES=\"${STORAGE_NODES}\"" >> ${HA_CONF}
+        fi
+    fi
+    if [ "x${vip}" != "x" ]; then
+        sed -i "s/\\(HA_VIPS=\\).*/\\1\"${HA_VIPS}\"/" ${HA_CONF}
+        if [[ ${DETERMINISTIC_FAILOVER} == true && "x${HA_VIP_NODES}" != "x" ]]; then
+            sed -i "s/\\(HA_VIP_NODES=\\).*/\\1\"${HA_VIP_NODES}\"/" ${HA_CONF}
         fi
     fi
 }
