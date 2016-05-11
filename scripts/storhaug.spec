@@ -1,5 +1,5 @@
 %define major_version 0
-%define minor_version 10
+%define minor_version 11
 %define release 1%{?dist}
 
 Name: storhaug
@@ -27,24 +27,27 @@ Requires: pcs
 %description
 High-Availability add-on for storage servers
 
-### NFS (GANESHA)
+### NFS (NFS-Ganesha)
 %package nfs
-Summary: STORHAUG NFS module
+Summary: storhaug NFS module
 Group: Applications/System
 Requires: storhaug = %{version}-%{release}
 Requires: nfs-ganesha
+Requires: nfs-ganesha-utils
 
 %description nfs
 High-Availability NFS add-on for storage servers
 
-### SMB (SAMBA)
+### SMB (Samba)
 %package smb
-Summary: STORHAUG SMB module
+Summary: storhaug SMB module
 Group: Applications/System
 Requires: storhaug = %{version}-%{release}
 Requires: ctdb >= 2.5
 Requires: samba
 Requires: samba-client
+Requires: samba-winbind
+Requires: samba-winbind-clients
 
 %description smb
 High-Availability SMB add-on for storage servers
@@ -108,25 +111,6 @@ systemctl stop nfs-server nfs-lock
 systemctl disable nfs-server nfs-lock
 %endif
 
-[ -d /var/lib/nfs.backup ] || mv /var/lib/nfs /var/lib/nfs.backup
-[ -d /var/lib/nfs ] && rm -rf /var/lib/nfs
-ln -s /gluster/state/`hostname`/nfs /var/lib/nfs
-
-if [[ ! -f /etc/dbus-1/system.d/org.ganesha.nfsd.conf ]]; then
-	cp /etc/glusterfs-ganesha/org.ganesha.nfsd.conf /etc/dbus-1/system.d/
-%if %{defined rhel} && %{rhel} < 7
-	service messagebus restart
-%else
-	systemctl restart messagebus
-%endif
-fi
-
-%postun nfs
-if [ -d /var/lib/nfs.backup ]; then
-	rm -rf /var/lib/nfs
-	mv /var/lib/nfs.backup /var/lib/nfs
-fi
-
 %clean
 %{__rm} -rf %{buildroot}
 
@@ -148,6 +132,25 @@ fi
 
 
 %changelog
+* Wed May 11 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.11-1
+- Overhaul addnode().
+
+* Wed May 11 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.10-4
+- Add hook for OCF_DEBUG_LIBRARY in RAs.
+- Cache local hostname.
+- Various cruft removals.
+- Improve cleanup, add cleanup-all.
+- Fix copy_config().
+- Don't be such a Red Hat.
+
+* Wed May 11 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.10-3
+- Parametize NFS-Ganesha config file.
+- Do /var/lib/nfs swap in NFS-Ganesha RA.
+- Parametize NFS-Ganesha shared state mountpoint.
+
+* Sat Mar 05 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.10-2
+- Shorten and clarify copyright notice
+
 * Mon Feb 29 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.10-1
 - Major reorganization of main script file
 - Provide HA for NFS-Ganesha, based on ganesha-ha

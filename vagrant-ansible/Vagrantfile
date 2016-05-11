@@ -25,6 +25,7 @@ settings = {
   ],
   :vms_common => {
     :box => 'centos/'+EL_VER,
+    :os => 'el'+EL_VER,
     :memory => 2048,
     :cpus => 2,
     :networks => [
@@ -49,13 +50,15 @@ settings = {
       },
     ],
     :sync_folders => [
-      { :src => "../src", :dest => "/shared/source", },
+      { :src => "../source", :dest => "/shared/src", },
+      { :src => "../scripts", :dest => "/shared/scripts", },
       { :src => "../repo", :dest => "/shared/repo", },
     ],
   },
   :groups => {
     :ha_servers => [ "all" ],
     :smb_servers => [ "all" ],
+    :nfs_servers => [ "all" ],
     :gluster_servers => [ "all" ],
   },
   :ha => {
@@ -83,7 +86,7 @@ settings = {
     :bricks_dir => "/data/bricks",
     :volumes => [
         { name: 'share' },
-#        { name: "nfs_ganesha" },
+         { name: "state" },
         { name: 'ctdb', replica: "n", mount: "/shared/lock" },
       ],
   },
@@ -99,7 +102,12 @@ custom_settings = {}
 f = File.join(projectdir, 'vagrant.yaml')
 
 if File.exists?(f)
-  custom_settings = YAML::load_file f
+  begin
+    custom_settings = YAML::load_file f
+    if custom_settings == false then raise end
+  rescue
+    retry
+  end
 else
   File.open(f, 'w') do |file|
     file.write settings.to_yaml
@@ -120,6 +128,7 @@ vms_common = settings[:vms_common]
 groups     = settings[:groups]
 group_vars = settings[:group_vars]
 samba      = settings[:samba]
+ganesha    = settings[:ganesha]
 ctdb       = settings[:ctdb]
 ad         = settings[:ad]
 gluster    = settings[:gluster]
@@ -148,26 +157,37 @@ end
 #
 
 group_defs = {
+  :ha_servers => {
+    :install_pkgs => " storhaug",
+    :services => [],
+  },
   :smb_servers => {
-    :install_pkgs => " samba samba-winbind",
+    :install_pkgs => " storhaug-smb",
     :services => [],
   },
   :gluster_servers => {
     :install_pkgs => " glusterfs-server glusterfs-client",
     :services => [ "glusterd" ],
   },
+  :nfs_servers => {
+    :install_pkgs => " storhaug-nfs",
+    :services => [ "nfs-ganesha" ],
+  },
+ :clients => {
+    :install_pkgs => " cifs-utils glusterfs-fuse",
+ },
 }
 if gluster[:setup_gluster]
   group_defs[:smb_servers][:install_pkgs] << " samba-vfs-glusterfs"
-  group_defs[:smb_servers][:services].push "glusterd"
+  group_defs[:nfs_servers][:install_pkgs] << " nfs-ganesha-gluster glusterfs-ganesha"
 end
-if ctdb[:setup_ctdb]
-  group_defs[:smb_servers][:install_pkgs] << " ctdb"
-  group_defs[:smb_servers][:services].push "ctdb"
-else
+if not ctdb[:setup_ctdb]
   group_defs[:smb_servers][:services].push "winbind"
   group_defs[:smb_servers][:services].push "smb"
   group_defs[:smb_servers][:services].push "nmb"
+else
+  group_defs[:smb_servers][:install_pkgs] << " ctdb"
+  group_defs[:smb_servers][:services].push "ctdb"
 end
 
 #==============================================================================
@@ -181,7 +201,12 @@ active_vms = []
 f = File.join(projectdir, 'active_vms.yaml')
 
 if File.exists?(f)
-  active_vms = YAML::load_file f
+  begin
+    active_vms = YAML::load_file f
+    if active_vms == false then raise end
+  rescue
+    retry
+  end
 end
 
 if ARGV[0] == "up"
@@ -233,12 +258,18 @@ groups.each do |name,group|
         groups[name] = active_vms.count > 1 ? active_vms[0..-2] : [ active_vms[0] ]
       when node.is_a?(Integer)
         groups[name][i] = active_vms[node]
+      else
+        groups[name][i] = node
       end
     end
   end
 end
 if ad[:setup_ad] and not groups.keys.include? "ad_server"
   groups[:ad_server] = group[:smb_servers][0]
+end
+
+if ENV['VAGRANT_LOG'] == 'debug'
+  p "groups: #{groups}"
 end
 
 #==============================================================================
@@ -250,7 +281,7 @@ install_pkgs = {}
 services = {}
 if active_vms.length > 0
   active_vms.each do |name|
-    install_pkgs[name] = "python python-simplejson libselinux-python xfsprogs gnupg "
+    install_pkgs[name] = "yum python python-dnf python-simplejson libselinux-python xfsprogs gnupg "
     if vms_common[:install_pkgs]
       install_pkgs[name] << " " + vms_common[:install_pkgs]
     end
@@ -262,18 +293,13 @@ if active_vms.length > 0
   end
   groups.each do |name,group|
     group.each do |node|
-      if group_defs and group_defs[name] and group_defs[name][:install_pkgs]
-        install_pkgs[node] << group_defs[name][:install_pkgs]
+      if group_defs and group_defs[name]
+        install_pkgs[node] << group_defs[name][:install_pkgs] if group_defs[name][:install_pkgs]
+        services[node].push group_defs[name][:services] if group_defs[name][:services]
       end
-      if group_vars and group_vars[name] and group_vars[name][:install_pkgs]
-        install_pkgs[node] << " " + group_vars[name][:install_pkgs]
-      end
-
-      if group_defs and group_defs[name] and group_defs[name][:services]
-        services[node].push group_defs[name][:services]
-      end
-      if group_vars and group_vars[name] and group_vars[name][:services]
-        services[node].push group_vars[name][:services]
+      if group_vars and group_vars[name]
+        install_pkgs[node] << " " + group_vars[name][:install_pkgs] if group_vars[name][:install_pkgs]
+        services[node].push group_vars[name][:services] if group_vars[name][:services]
       end
     end
   end
@@ -368,15 +394,25 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       end
 
       playbooks = []
-      playbooks.push("playbooks/raw-centos.yml")
-      custom_provision = "playbooks/custom.yml"
-      if File.exists?(custom_provision)
-        playbooks.push(custom_provision)
+      if ENV['RUN']
+        playbooks.push(ENV['RUN'])
+      else
+        playbooks.push("playbooks/raw-#{vms_common[:os]}.yml")
+        custom_pre_provision = ENV['CUSTOM_PRE'] ? ENV['CUSTOM_PRE'] : "playbooks/custom_pre.yml"
+        if File.exists?(custom_pre_provision)
+          playbooks.push(custom_pre_provision)
+        end
+        playbooks.push("playbooks/storhaug.yml")
+        custom_post_provision = ENV['CUSTOM_POST'] ? ENV['CUSTOM_POST'] : "playbooks/custom_post.yml"
+        if File.exists?(custom_post_provision)
+          playbooks.push(custom_post_provision)
+        end
       end
-      playbooks.push("playbooks/storhaug.yml")
       playbooks.each do |playbook|
-        node.vm.provision :ansible do |ansible|
-#          ansible.verbose = "vvv"
+        node.vm.provision "ansible" do |ansible|
+          if ENV['ANSIBLE_DEBUG']
+            ansible.verbose = ENV['ANSIBLE_DEBUG']
+          end
           ansible.playbook = playbook
           ansible.groups = {}
           groups.each do |name,group|
@@ -388,6 +424,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
             "vips"        => ha[:virtual_ips],
             "ha_name"     => ha[:ha_name],
             "samba"       => samba,
+            "ganesha"     => ganesha,
             "ctdb"        => ctdb,
             "ad"          => ad,
             "gluster"     => gluster,
