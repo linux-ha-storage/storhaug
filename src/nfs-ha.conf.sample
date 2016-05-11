@@ -6,3 +6,6 @@ HA_NFS_VOL="state"
 
 # [OPTIONAL] Mount point for shared volume.
 HA_NFS_MNT_DIR="state"
+
+# [OPTIONAL] Config file for NFS. If not specified, we'll will try to find it.
+HA_NFS_CONF="/etc/ganesha/ganesha.conf"

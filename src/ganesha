@@ -33,6 +33,7 @@
 
 default_config="/etc/ganesha/ganesha.conf"
 default_pidfile="/var/run/ganesha.pid"
+default_state_mnt="/var/run/ganesha/state"
 binary=$(which ganesha.nfsd 2> /dev/null)
 
 if [ -z "$binary" ]; then
@@ -70,6 +71,15 @@ Full path to ganesha pidfile.
 <content type="string" default="$default_pidfile" />
 </parameter>
 
+
+<parameter name="state_mnt" required="0">
+<longdesc lang="en">
+The directory where NFS-Ganesha's shared state will be mounted.
+</longdesc>
+<shortdesc lang="en">shared state FS type</shortdesc>
+<content type="string" default="$default_state_fs" />
+</parameter>
+
 </parameters>
 
 <actions>
@@ -96,6 +106,21 @@ END
 ganesha_start() {
 	local opts="-f $OCF_RESKEY_config -p $OCF_RESKEY_pidfile $OCF_RESKEY_options -d"
 	local rc
+
+	if [ ! -L "/var/lib/nfs" ] ; then
+		mv /var/lib/nfs /var/lib/nfs.backup
+		rm -rf /var/lib/nfs
+	else
+		_t=$(readlink "/var/lib/nfs")
+		if [ "$_t" != "${OCF_RESKEY_state_mnt}" ] ; then
+			rm -f "/var/lib/nfs"
+		fi
+	fi
+	# This is not an "else".  It also re-creates the link if it was
+	# removed above!
+	if [ ! -e "/var/lib/nfs" ]; then
+		ln -sf "${OCF_RESKEY_state_mnt}/nfs-ganesha/`hostname`/" "/var/lib/nfs"
+	fi
 
 	ganesha_monitor
 	if [ $? -ne $OCF_SUCCESS ]; then
@@ -134,6 +159,11 @@ ganesha_stop() {
 		ocf_log err "Failed to stop ganesha at pid $pid"
 		return $OCF_ERR_GENERIC
 	fi
+
+	if [ -L /var/lib/nfs ] && [ -d /var/lib/nfs.backup ]; then
+		rm -f /var/lib/nfs
+		mv /var/lib/nfs.backup /var/lib/nfs
+	fi
 	return $OCF_SUCCESS
 }
 
@@ -166,6 +196,7 @@ ganesha_validate() {
 
 : ${OCF_RESKEY_config=${default_config}}
 : ${OCF_RESKEY_pidfile=${default_pidfile}}
+: ${OCF_RESKEY_state_mnt=${default_state_mnt}}
 
 case $__OCF_ACTION in
 meta-data)	meta_data

@@ -390,7 +390,8 @@ setup_create_resources()
     # Ganesha
     pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
         params \
-            config="${SYS_CONFDIR}/glusterfs-ganesha/nfs-ganesha.conf" \
+            config="${HA_NFS_CONF}" \
+            state_mnt="${HA_NFS_STATE_MNT}" \
         --clone nfs-ganesha-clone ganesha meta interleave="true" \
                                            globally-unique="false" \
                                            notify="true"
@@ -683,6 +684,25 @@ done
 . $HA_CONF_sec
 
 parsebool "DETERMINISTIC_FAILOVER"
+
+if [ -z "$HA_NFS_CONF" ]; then
+    # Try loading the NFS-Ganesha config from various distro-specific locations
+    if [ -f /etc/sysconfig/ganesha ]; then
+        GANSYSCONF="/etc/sysconfig/ganesha"
+    elif [ -f /etc/conf.d/ganesha ]; then
+        GANSYSCONF="/etc/conf.d/ganesha"
+    elif [ -f /etc/default/ganesha ]; then
+        GANSYSCONF="/etc/default/ganesha"
+    fi
+
+    if [ -z "$GANSYSCONF" ]; then
+        GANSYSOPTS=$(grep -s "OPTIONS" "$GANSYSCONF")
+        if [ -n "$GANSYSOPTS" ] && grep -qs "-f" < "${GANSYSOPTS}"; then
+            HA_NFS_CONF=$(sed -ne 's/^.*-f[= ]*([^\s]*)*/\1/p')
+        fi
+    fi
+fi
+HA_NFS_CONF="${HA_NFS_CONF:-/etc/ganesha/ganesha.conf}"
 
 case "${cmd}" in
     setup | --setup)
