@@ -112,6 +112,43 @@ scpdo()
     return $_ret
 }
 
+# Check that a symlink exists, create it otherwise.
+# Usage: ensure_ln <TARGET> <LINK>
+ensure_ln ()
+{
+    if [ ! -L "${2}" ] ; then
+        rm -rf "${2}"
+    else
+        _t=$(readlink "${2}")
+        if [ "$_t" != "${1}" ] ; then
+            rm -f "${2}"
+        fi
+    fi
+    # This is not an "else".  It also re-creates the link if it was
+    # removed above!
+    if [ ! -e "${2}" ]; then
+        ln -sf "${1}" "${2}"
+    fi
+}
+
+# Check that a directory exists, create it otherwise.
+# Only use on paths guaranteed to be directories.
+ensure_dir ()
+{
+    if [ ! -d "${1}" ] ; then
+        mkdir -p "${1}"
+    fi
+}
+
+# Check that a file exists, touch it otherwise.
+# Only use on paths guaranteed to be regular files.
+ensure_file ()
+{
+    if [ ! -e "${1}" ]; then
+        touch "${1}"
+    fi
+}
+
 ### General cluster functions
 
 check_cluster_exists()
@@ -186,9 +223,10 @@ copy_config()
 
 copy_export_config()
 {
-    local new_node=${1}
-    scpdo ${HA_VOL_SERVER}:${GANESHA_CONF} ${new_node}:${GANESHA_CONF}
-    scpdo ${HA_VOL_SERVER}:${HA_CONFDIR}/exports ${new_node}:${HA_CONFDIR}/
+    if [ ${_hostname%%.*} != ${1%%.*} ]; then
+        scpdo ${HA_VOL_SERVER}:${HA_NFS_CONF} ${1}:${HA_NFS_CONF}
+        scpdo ${HA_VOL_SERVER}:${HA_NFS_EXPDIR} ${1}:${HA_NFS_EXPDIR}
+    fi
 }
 
 ### General resource functions
@@ -407,9 +445,10 @@ setup_state_volume()
     local mnt=$(mktemp -d --tmpdir=$HA_CONF_secdir)
     local dname=""
     local dirname=""
+    local staterefs="${mnt}/nfs-ganesha/.noderefs"
 
     mount -t glusterfs ${HA_SERVER}:/${HA_NFS_VOL} ${mnt}
-    mkdir -p ${mnt}/nfs-ganesha
+    ensure_dir ${staterefs}
 
     dname=${_hostname#*.}
 
@@ -421,28 +460,18 @@ setup_state_volume()
             dirname=${srv}${dname}
         fi
 
-        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4recov ]; then
-            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4recov
-        fi
-        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4old ]; then
-            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/v4old
-        fi
-        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm ]; then
-            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm
-        fi
-        if [ ! -d ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm.bak ]; then
-            mkdir -p ${mnt}/nfs-ganesha/${dirname}/nfs/statd/sm.bak
-        fi
-        if [ ! -e ${mnt}/nfs-ganesha/${dirname}/nfs/state ]; then
-            touch ${mnt}/nfs-ganesha/${dirname}/nfs/state
-        fi
-        if [ ! -e ${mnt}/nfs-ganesha/${dirname}/nfs/statd/state ]; then
-            touch ${mnt}/nfs-ganesha/${dirname}/nfs/statd/state
-        fi
+        ensure_dir ${mnt}/nfs-ganesha/${dirname}/ganesha/v4recov
+        ensure_dir ${mnt}/nfs-ganesha/${dirname}/ganesha/v4old
+        ensure_dir ${mnt}/nfs-ganesha/${dirname}/statd/sm
+        ensure_dir ${mnt}/nfs-ganesha/${dirname}/statd/sm.bak
+        ensure_file ${mnt}/nfs-ganesha/${dirname}/state
+        ensure_file ${mnt}/nfs-ganesha/${dirname}/statd/state
+        ensure_ln ${mnt}/nfs-ganesha/${dirname} ${staterefs}/${dirname}
+
         for server in ${HA_SERVERS} ; do
             if [ ${server} != ${dirname} ]; then
-                ln -sf ${mnt}/nfs-ganesha/${server}/nfs/ganesha ${mnt}/nfs-ganesha/${dirname}/nfs/ganesha/${server}
-                ln -sf ${mnt}/nfs-ganesha/${server}/nfs/statd ${mnt}/nfs-ganesha/${dirname}/nfs/statd/${server}
+                ensure_ln ${staterefs}/${server}/ganesha ${mnt}/nfs-ganesha/${dirname}/ganesha/${server}
+                ensure_ln ${staterefs}/${server}/statd ${mnt}/nfs-ganesha/${dirname}/statd/${server}
             fi
         done
         shift
@@ -594,47 +623,51 @@ deletenode()
 
 ### Refresh functions
 
-refresh_config()
+# TODO: Move to RA
+refresh_nfs_config()
 {
-        local short_host=$(hostname -s)
-        local VOL=${1}
-        local HA_CONFDIR=${2}
+        local VOL=${1}; shift
+        local HA_CONFDIR=${1}; shift
+        local tganesha_vol_conf=$(mktemp)
 
-        removed_id=`cat $HA_CONFDIR/exports/export.$VOL.conf |\
-grep Export_Id | cut -d " " -f8`
+        cp ${HA_NFS_EXPDIR}/export.$VOL.conf ${tganesha_vol_conf}
+        local get_id="cat $HA_NFS_EXPDIR/export.$VOL.conf | grep Export_Id | cut -d \" \" -f8"
 
         if [ -e ${SECRET_PEM} ]; then
-        while [[ ${3} ]]; do
-            current_host=`echo ${3} | cut -d "." -f 1`
-            if [ ${short_host} != ${current_host} ]; then
-                 scpdo ${HA_CONFDIR}/exports/export.$VOL.conf ${current_host}:${HA_CONFDIR}/exports/
-                 sshdo ${current_host} "dbus-send --print-reply --system \
---dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr \
-org.ganesha.nfsd.exportmgr.RemoveExport uint16:$removed_id"
-                 sleep 1
-                 sshdo ${current_host} "dbus-send  --system \
---dest=org.ganesha.nfsd  /org/ganesha/nfsd/ExportMgr \
-org.ganesha.nfsd.exportmgr.AddExport  string:$HA_CONFDIR/exports/export.$VOL.conf \
-string:\"EXPORT(Path=/$VOL)\""
-               if [ $? -ne 0 ]; then
-                    echo "warning: refresh-config failed on ${current_host}"
-               fi
+        while [[ ${1} ]]; do
+            _id=$(sshdo ${current_host} "${get_id}")
+            _out=$(sshdo ${current_host} "dbus-send --print-reply \
+--system --dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr \
+org.ganesha.nfsd.exportmgr.RemoveExport uint16:$_id 2>&1")
+            _ret=$?
+            storlog "DEBUG" "${_out}"
+            if [ ${_ret} -ne 0 ]; then
+                storlog "ERR" "RemoveExport failed on ${current_host}."
             fi
+
+            sleep 1
+            sed -i s/Export_Id.*/"Export_Id= $_id ;"/ ${tganesha_vol_conf}
+            if [ ${_hostname%%.*} != ${1%%.*} ]; then
+                scpdo ${tganesha_vol_conf} \
+                  ${current_host}:${HA_NFS_EXPDIR}/export.$VOL.conf
+            fi
+
+            _out=$(sshdo ${current_host} "dbus-send  --system \
+--dest=org.ganesha.nfsd  /org/ganesha/nfsd/ExportMgr \
+org.ganesha.nfsd.exportmgr.AddExport string:$HA_NFS_EXPDIR/export.$VOL.conf \
+string:\"EXPORT(Path=/$VOL)\"")
+            _ret=$?
+            storlog "DEBUG" "${_out}"
+            if [ ${_ret} -ne 0 ]; then
+                storlog "ERR" "AddExport failed on ${current_host}."
+            fi
+            storlog "DEBUG" "refresh-config completed for ${current_host}."
             shift
         done
         else
-            echo "warning: refresh-config failed on ${1}"
+            storlog "ERR" "refresh-config failed: Passwordless ssh is not enabled."
         fi
-
-	#Run the same command on the localhost,
-        dbus-send --print-reply --system \
---dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr \
-org.ganesha.nfsd.exportmgr.RemoveExport uint16:$removed_id
-        sleep 1
-        dbus-send  --system \
---dest=org.ganesha.nfsd  /org/ganesha/nfsd/ExportMgr \
-org.ganesha.nfsd.exportmgr.AddExport  string:$HA_CONFDIR/exports/export.$VOL.conf \
-string:"EXPORT(Path=/$VOL)"
+        rm -f ${tganesha_vol_conf}
 }
 
 ### Mainline
@@ -680,6 +713,7 @@ if [ -z "$HA_NFS_CONF" ]; then
     fi
 fi
 HA_NFS_CONF="${HA_NFS_CONF:-/etc/ganesha/ganesha.conf}"
+HA_NFS_EXPDIR="${HA_NFS_EXPDIR:-$(dirname ${HA_NFS_CONF})/exports}"
 
 case "${cmd}" in
     setup | --setup)
