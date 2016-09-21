@@ -2,7 +2,7 @@
 # file: storhaug.yml
 - hosts: ha_servers
   name: Initializing
-  sudo: yes
+  become: yes
 
   tasks:
     - name: Detect guest OS family
@@ -20,27 +20,27 @@
       register: part_result
       changed_when: "'FOUND' not in part_result.stdout"
       with_subelements:
-        - extra_disks
+        - "{{extra_disks}}"
         - parts
       when: extra_disks is defined
 
     - name: Create extra disk filesystems
       filesystem: fstype={{item[1].fs}} dev=/dev/{{item[0].dev}}{{item[1].num}}
       with_subelements:
-        - extra_disks
+        - "{{extra_disks}}"
         - parts
       when: extra_disks is defined
 
     - name: Mount extra disk filesystems
       mount: name={{item[1].mount}} src=/dev/{{item[0].dev}}{{item[1].num}} fstype={{item[1].fs}} state=mounted
       with_subelements:
-        - extra_disks
+        - "{{extra_disks}}"
         - parts
       when: extra_disks is defined
 
 - hosts: RedHat
   name: Server Setup (RedHat)
-  sudo: yes
+  become: yes
   gather_facts: False
 
   tasks:
@@ -50,7 +50,7 @@
 
 - hosts: none
   name: Server Setup (Common)
-  sudo: yes
+  become: yes
 
   roles:
     - common
@@ -75,7 +75,7 @@
 
 - hosts: gluster_servers:smb_servers
   name: GlusterFS Setup
-  sudo: yes
+  become: yes
 
   roles:
     - { role: glusterfs, when: "gluster['setup_gluster'] is defined and gluster['setup_gluster']" }
@@ -160,6 +160,7 @@
       with_items: "{{ gluster['volumes'] }}"
       register: result
       until: result|success
+      retries: 3
 
     - name: Start Gluster volumes.
       gluster_volume:
@@ -202,7 +203,7 @@
 
 - hosts: smb_servers
   name: Server Setup (SMB)
-  sudo: yes
+  become: yes
 
 #  roles:
 #    - samba
@@ -228,7 +229,7 @@
 
 - hosts: nfs_servers
   name: Server Setup (NFS)
-  sudo: yes
+  become: yes
 
   tasks:
     - name: Copy Ganesha config files
@@ -240,7 +241,7 @@
 
 - hosts: ad_server
   name: Active Directory Setup
-  sudo: yes
+  become: yes
 
   tasks:
     - include: roles/storhaug/tasks/setup-AD.yml
@@ -248,7 +249,7 @@
 
 - hosts: ha_servers
   name: Storhaug Configuration and Initialization
-  sudo: yes 
+  become: yes 
 
   roles:
     - storhaug
