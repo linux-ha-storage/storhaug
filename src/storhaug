@@ -691,8 +691,8 @@ HA_CONF_sec="$HA_CONF_secdir/sec.conf"
 
 # Filter all config files into secure format
 egrep '^#|^[^ ]*=[^;&]*'  "$HA_CONF" > "$HA_CONF_sec"
-for conffile in `ls $HA_CONF_INCDIR 2>/dev/null`; do
-    egrep '^#|^[^ ]*=[^;&]*'  "$HA_CONF_INCDIR/$conffile" >> "$HA_CONF_sec"
+for conffile in `ls $HA_CONF_INCDIR/*.conf 2>/dev/null`; do
+    egrep '^#|^[^ ]*=[^;&]*'  "$conffile" >> "$HA_CONF_sec"
 done
 
 # Source/load the config
