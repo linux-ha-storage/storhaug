@@ -15,7 +15,7 @@ HA_SERVERS=""
 SYS_CONFDIR="/etc/sysconfig"
 HA_CONF="${SYS_CONFDIR}/storhaug.conf"
 HA_CONF_INCDIR="${SYS_CONFDIR}/storhaug.d"
-HA_MNT_DIR="/var/run/storhaug"
+HA_MNT_DIR="/run/storhaug"
 HA_SMB_MNT_DIR="lock"
 HA_NFS_MNT_DIR="state"
 STORAGE_SERVERS=""
@@ -221,7 +221,8 @@ copy_config()
     done
 }
 
-copy_export_config()
+# TODO: Move to RA
+copy_nfs_config()
 {
     if [ ${_hostname%%.*} != ${1%%.*} ]; then
         scpdo ${HA_VOL_SERVER}:${HA_NFS_CONF} ${1}:${HA_NFS_CONF}
@@ -367,8 +368,8 @@ setup_create_resources()
             device="localhost:/${HA_NFS_VOL}" \
             directory="${HA_MNT_DIR}/${HA_NFS_MNT_DIR}" \
             fstype="glusterfs" \
-                       options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
-               --clone ganesha_state-clone ganesha_state meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
+            options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
+        --clone ganesha_state-clone ganesha_state meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
     pcs -f ${cibfile} constraint location ganesha_state-clone rule resource-discovery=exclusive score=0 role eq storage
 
@@ -441,6 +442,7 @@ setup_create_resources()
     rm -f ${cibfile}
 }
 
+# TODO: Move to RA
 setup_state_volume()
 {
     local mnt=$(mktemp -d --tmpdir=$HA_CONF_secdir)
@@ -587,6 +589,7 @@ addnode()
 deletenode()
 {
     local node=${1}; shift
+    local vip=${1}; shift
 
     storlog "INFO" "Deleting node ${node} from ${HA_NAME}"
 
@@ -599,14 +602,15 @@ deletenode()
     fi
     determine_servers "delete"
 
-    copy_export_config ${node} ${HA_CONFDIR}
     pcs cluster node remove ${node} || storlog "ERR" "Failed: pcs cluster node remove ${node}"
 
     if [[ ${DETERMINISTIC_FAILOVER} == true ]]; then
+        local cibfile=$(mktemp --tmpdir=$HA_CONF_secdir)
         pcs cluster cib ${cibfile}
+
         local ipcount=$(wc -w <<< "${HA_VIPS}")
-        ((ipcount++))
         clear_virt_ip_constraints ${cibfile}
+        # TODO: delete_virt_ip ${cibfile} ${ipcount} ${vip}
         for ((i=1;i<=${ipcount};i++)); do
             create_virt_ip_constraints ${cibfile} ${i}
         done
@@ -748,6 +752,7 @@ case "${cmd}" in
         node=${1}; shift
         vip=${1}; shift
         role=${1}; shift
+        copy_nfs_config ${node}
         addnode ${node} ${vip} ${role}
         copy_config ${HA_SERVERS}
         ;;
