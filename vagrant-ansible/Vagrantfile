@@ -281,7 +281,7 @@ install_pkgs = {}
 services = {}
 if active_vms.length > 0
   active_vms.each do |name|
-    install_pkgs[name] = "yum python python-dnf python-simplejson libselinux-python xfsprogs gnupg "
+    install_pkgs[name] = "yum yum-utils python python-dnf python-simplejson libselinux-python xfsprogs gnupg "
     if vms_common[:install_pkgs]
       install_pkgs[name] << " " + vms_common[:install_pkgs]
     end
@@ -319,13 +319,11 @@ end
 #
 
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
-  if Vagrant.has_plugin?("vagrant-cachier")
-    config.cache.scope = :box
-    config.cache.auto_detect = false
-    config.cache.enable :yum
-  end
-
   config.ssh.insert_key = false
+
+  config.vm.provider :libvirt do |libvirt|
+    libvirt.storage_pool_name = vms_common[:storage_pool] ? vms_common[:storage_pool] : 'default'
+  end
 
   vms.each do |machine|
     config.vm.define machine[:name] do |node|
@@ -438,6 +436,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
           if ENV['EXTRA_VARS']
             ansible.extra_vars.merge! eval ENV['EXTRA_VARS']
           end
+          ansible.extra_vars['vagrant_home'] = ENV['VAGRANT_HOME'] ? ENV['VAGRANT_HOME'] : "~/.vagrant.d"
           ansible.limit = "all"
         end
       end

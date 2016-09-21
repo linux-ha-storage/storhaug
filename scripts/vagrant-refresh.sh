@@ -1,5 +1,8 @@
 #!/bin/bash
 
+DESTROY=false
+PROVISION=false
+
 cd `git rev-parse --show-toplevel`
 cd vagrant-ansible
 
@@ -14,33 +17,34 @@ fi
 MACHINES=( $(echo "$VSTATUS" | grep "running" | awk '{print $1}') )
 NUM_MACH=${#MACHINES[@]}
 
-if [[ $NUM_MACH > 0 ]]; then
-  conf=$(mktemp)
-  vagrant ssh-config > $conf
-  scp -rF $conf ${MACHINES[0]}:/tmp/vagrant-cache/* ~/.vagrant.d/cache/centos/7/
-fi
-
 if [[ "$1" == "-f" ]]; then
-  vagrant destroy
+  DESTROY=true
+  PROVISION=true
   shift
-  set -- ${@:-${MACHINES[@]}}
-  vagrant up --no-provision $@
-  vagrant provision ${1}
 elif [[ "$1" == "-p" ]]; then
+  PROVISION=true
   shift
-  set -- ${@:-${MACHINES[@]}}
-  vagrant rsync $@
-  vagrant provision ${1}
-else
-  set -- ${@:-${MACHINES[@]}}
-  vagrant rsync $@
 fi
 
-while [[ $# > 0 ]]; do
-  vagrant ssh $1 -c "sudo sh -c \"stty cols 80; yum -y reinstall storhaug* | cat\"" | while read -r line; do
-    echo -en "[$1] $line\r\n"
-  done &
-  shift
-done
+set -- ${@:-${MACHINES[@]}}
+
+if [[ $DESTROY ]]; then
+  vagrant destroy
+  vagrant up --no-provision $@
+fi
+
+if [[ $PROVISION ]]; then
+  vagrant provision ${1}
+fi
+
+if [[ ! $DESTROY ]]; then
+  vagrant rsync $@
+  while [[ $# > 0 ]]; do
+    vagrant ssh $1 -c "sudo sh -c \"stty cols 80; yum -y makecache all; yum -y reinstall storhaug* | cat\"" | while read -r line; do
+      echo -en "[$1] $line\r\n"
+    done &
+    shift
+  done
+fi
 
 wait
