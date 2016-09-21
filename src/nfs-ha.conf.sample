@@ -1,5 +1,5 @@
 # Type of storage used for the shared NFS state.
-HA_NFS_TYPE="glusterfs"
+HA_NFS_STATE_FS="glusterfs"
 
 # Shared volume to store NFS state.
 HA_NFS_VOL="state"

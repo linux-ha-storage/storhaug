@@ -411,6 +411,7 @@ setup_create_resources()
     pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
         params \
             config="${HA_NFS_CONF}" \
+            state_fs="${HA_NFS_STATE_FS}" \
             state_mnt="${HA_NFS_STATE_MNT}" \
         --clone nfs-ganesha-clone ganesha meta interleave="true" \
                                            globally-unique="false" \

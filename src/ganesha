@@ -38,6 +38,7 @@ fi
 
 default_config="/etc/ganesha/ganesha.conf"
 default_pidfile="/var/run/ganesha.pid"
+default_state_fs="glusterfs"
 default_state_mnt="/var/run/ganesha/state"
 binary=$(which ganesha.nfsd 2> /dev/null)
 
@@ -77,6 +78,15 @@ Full path to ganesha pidfile.
 </parameter>
 
 
+<parameter name="state_fs" required="0">
+<longdesc lang="en">
+The type of filesystem used for NFS-Ganesha's shared state.
+</longdesc>
+<shortdesc lang="en">shared state FS type</shortdesc>
+<content type="string" default="$default_state_fs" />
+</parameter>
+
+
 <parameter name="state_mnt" required="0">
 <longdesc lang="en">
 The directory where NFS-Ganesha's shared state will be mounted.
@@ -109,7 +119,7 @@ END
 }
 
 ganesha_start() {
-	local opts="-f $OCF_RESKEY_config -p $OCF_RESKEY_pidfile $OCF_RESKEY_options -d"
+	local opts="-f $OCF_RESKEY_config -p $OCF_RESKEY_pidfile $OCF_RESKEY_options"
 	local rc
 
 	if [ ! -L "/var/lib/nfs" ] ; then
@@ -201,6 +211,7 @@ ganesha_validate() {
 
 : ${OCF_RESKEY_config=${default_config}}
 : ${OCF_RESKEY_pidfile=${default_pidfile}}
+: ${OCF_RESKEY_state_fs=${default_state_fs}}
 : ${OCF_RESKEY_state_mnt=${default_state_mnt}}
 
 case $__OCF_ACTION in
