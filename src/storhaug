@@ -412,8 +412,8 @@ setup_create_resources()
     pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
         params \
             config="${HA_NFS_CONF}" \
-            state_fs="${HA_NFS_STATE_FS}" \
-            state_mnt="${HA_NFS_STATE_MNT}" \
+            state_fs="${HA_NFS_TYPE}" \
+            state_mnt="${HA_MNT_DIR}/${HA_NFS_MNT_DIR}" \
         --clone nfs-ganesha-clone ganesha meta interleave="true" \
                                            globally-unique="false" \
                                            notify="true"
@@ -460,7 +460,7 @@ setup_state_volume()
         if [[ "${srv}" == *${dname} ]]; then
             dirname=${srv}
         else
-            dirname=${srv}${dname}
+            dirname=${srv}.${dname}
         fi
 
         ensure_dir ${mnt}/nfs-ganesha/${dirname}/ganesha/v4recov
@@ -469,12 +469,17 @@ setup_state_volume()
         ensure_dir ${mnt}/nfs-ganesha/${dirname}/statd/sm.bak
         ensure_file ${mnt}/nfs-ganesha/${dirname}/state
         ensure_file ${mnt}/nfs-ganesha/${dirname}/statd/state
-        ensure_ln ${mnt}/nfs-ganesha/${dirname} ${staterefs}/${dirname}
+        ensure_ln ${HA_MNT_DIR}/${HA_NFS_MNT_DIR}/nfs-ganesha/${dirname} ${staterefs}/${dirname}
 
         for server in ${HA_SERVERS} ; do
+            if [[ "${server}" == *${dname} ]]; then
+                server=${server}
+            else
+                server=${server}.${dname}
+            fi
             if [ ${server} != ${dirname} ]; then
-                ensure_ln ${staterefs}/${server}/ganesha ${mnt}/nfs-ganesha/${dirname}/ganesha/${server}
-                ensure_ln ${staterefs}/${server}/statd ${mnt}/nfs-ganesha/${dirname}/statd/${server}
+                ensure_ln ${HA_MNT_DIR}/${HA_NFS_MNT_DIR}/nfs-ganesha/.noderefs/${server}/ganesha ${mnt}/nfs-ganesha/${dirname}/ganesha/${server}
+                ensure_ln ${HA_MNT_DIR}/${HA_NFS_MNT_DIR}/nfs-ganesha/.noderefs/${server}/statd ${mnt}/nfs-ganesha/${dirname}/statd/${server}
             fi
         done
         shift
