@@ -48,23 +48,14 @@ ganesha nfs daemon.
 </longdesc>
 <shortdesc lang="en">ganesha TAKE_IP trigger</shortdesc>
 
-<parameters>
-
-<parameter name="ip" unique="0" required="1">
-<longdesc lang="en">
-The IP address to issue triggers for.
-</longdesc>
-<shortdesc lang="en">IP address</shortdesc>
-<content type="string" default="" />
-</parameter>
-
-</parameters>
+<parameters/>
 
 <actions>
 <action name="start"        timeout="40" />
 <action name="stop"         timeout="40" />
 <action name="status"       depth="0" timeout="20" interval="10" />
 <action name="monitor"      depth="0" timeout="20" interval="10" />
+<action name="notify"       timeout="20" />
 <action name="meta-data"    timeout="20" />
 <action name="validate-all" timeout="20" />
 </actions>
@@ -75,7 +66,7 @@ END
 #######################################################################
 CMD=`basename $0`
 
-usage() {
+trigger_usage() {
 	cat <<END
 usage: $CMD {start|stop|status|monitor|validate-all|meta-data}
 
@@ -83,23 +74,45 @@ Expects to have a fully populated OCF RA-compliant environment set.
 END
 }
 
-start() {
+trigger_start() {
 	ha_pseudo_resource "${OCF_RESOURCE_INSTANCE}" start
-
-	dbus-send --print-reply --system --dest=org.ganesha.nfsd \
-	/org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
-	string:${OCF_RESKEY_ip}
-	rc=$?
-	if [ $rc -ne 0 ]; then
-		ocf-log warn "FAILED: dbus-send --print-reply --system "\
-"--dest=org.ganesha.nfsd /org/ganesha/nfsd/admin "\
-"org.ganesha.nfsd.admin.grace string:${OCF_RESKEY_ip}"
-	fi
-
-	return $rc
+	return $OCF_SUCCESS
 }
 
-stop() {
+grace() {
+	rc=1
+	# Loop until success or timeout
+	while [ rc != 0 ]; do
+		dbus-send --print-reply --system --dest=org.ganesha.nfsd \
+		/org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
+		string:${1}
+		rc=$?
+		if [ $rc -ne 0 ]; then
+			ocf_log warn "FAILED: dbus-send --print-reply --system "\
+"--dest=org.ganesha.nfsd /org/ganesha/nfsd/admin "\
+"org.ganesha.nfsd.admin.grace string:${1}"
+			sleep 1;
+		fi
+	done
+}
+
+trigger_notify() {
+	# since this is a clone RA we should only ever see pre-start
+	# or post-stop
+	mode="${OCF_RESKEY_CRM_meta_notify_type}-${OCF_RESKEY_CRM_meta_notify_operation}"
+	case "${mode}" in
+	pre-start)
+		grace "5:$OCF_RESKEY_CRM_meta_notify_start_uname"
+		;;
+	post-stop)
+		grace "2:$OCF_RESKEY_CRM_meta_notify_stop_uname"
+		;;
+	esac
+
+	return $OCF_SUCCESS
+}
+
+trigger_stop() {
 	ha_pseudo_resource "${OCF_RESOURCE_INSTANCE}" stop
 	return $OCF_SUCCESS
 }
@@ -114,16 +127,15 @@ usage|help)		usage
 				;;
 esac
 
-if [ -z "$OCF_RESKEY_ip" ]; then
-  ocf_log err "Please set OCF_RESKEY_ip"
-  exit $OCF_ERR_CONFIGURED
-fi 
-
 case $__OCF_ACTION in
 status|monitor|validate-all)	exit $OCF_SUCCESS;;
-start)	start;;
-stop)	stop;;
-*)		usage
+start)	trigger_start;;
+stop)	trigger_stop;;
+notify) trigger_notify;;
+usage|help)	trigger_usage
+		exit $OCF_SUCCESS
+		;;
+*)		trigger_usage
 		exit $OCF_ERR_UNIMPLEMENTED
 		;;
 esac

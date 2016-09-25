@@ -301,8 +301,6 @@ create_virt_ip()
     pcs -f ${cibfile} constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
 
     pcs -f ${cibfile} resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
-        params \
-            ip=${ip} \
         meta resource-stickiness="0"
 
     pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
