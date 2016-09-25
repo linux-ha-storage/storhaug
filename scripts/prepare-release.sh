@@ -27,13 +27,15 @@ sed -i "s/\\(define release \\)[^%]*\\(.*\\)/\\1${HEADREL}\\2/" ${SPEC}
 
 LOG="$(git log --pretty="tformat:* %cd %aN <%aE> - ${VERSION}-${HEADREL}%n%b" --date=local -1 ${REVLIST[$((RELEASE-1))]} | sed -r 's/[0-9]+:[0-9]+:[0-9]+ //'; for ((i=1;i<${#REVLIST[@]};i++)); do git log --format="* %cd %aN <%aE> - ${OLD_VERSION}-$((RELEASE-i))%n%b" --date=local -1 ${REVLIST[i]} | sed -r 's/[0-9]+:[0-9]+:[0-9]+ //'; done)"
 
-sed "/\%changelog/a ${LOG//$'\n'/\\n}\n" ${SPEC} | vim -c "file ${SPEC}.tmp" -c "/changelog" -
+if ! grep -q "${VERSION}-${HEADREL}" ${SPEC}; then
+  sed "/\%changelog/a ${LOG//$'\n'/\\n}\n" ${SPEC} | vim -c "file ${SPEC}.tmp" -c "/changelog" -
 
-if [ -f "${SPEC}.tmp" ]; then
-  mv ${SPEC}.tmp ${SPEC}
-else
-  echo "No changelog saved, aborting release..."
-  exit
+  if [ -f "${SPEC}.tmp" ]; then
+    mv ${SPEC}.tmp ${SPEC}
+  else
+    echo "No changelog saved, aborting release..."
+    exit
+  fi
 fi
 
 ./scripts/build-rpms.sh ${VERSION} ${HEADREL} ${SPEC}

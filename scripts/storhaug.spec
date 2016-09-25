@@ -1,5 +1,5 @@
 %define major_version 0
-%define minor_version 11
+%define minor_version 12
 %define release 1%{?dist}
 
 Name: storhaug
@@ -132,6 +132,30 @@ systemctl disable nfs-server nfs-lock
 
 
 %changelog
+* Sat Sep 24 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.12-1
+ - Remove IP address parameter from trigger RA.
+ - Trigger grace from notify action.
+
+* Sat Sep 24 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.11-6
+ - Update shared state variable names
+ - Fix erroneous directory names
+ - Fix reverse reference links
+
+* Sat Sep 24 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.11-5
+ - Properly detect and source only properly named config files.
+
+* Wed Sep 21 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.11-4
+ - Missing copy functions.
+ - Prepare function for move to RA.
+ - Whitespace fixes.
+
+* Wed Sep 21 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.11-3
+ - Allow configuration of the shared state FS type via
+   HA_NFS_STATE_FS.
+
+* Wed Sep 21 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.11-2
+ - Use helper functions to help simplify long functions.
+
 * Wed May 11 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.11-1
 - Overhaul addnode().
 
