@@ -1,11 +1,11 @@
 hacking
 .vagrant/
 *.sw*
-custom.yml*
-custom_files/
+custom*
 active_vms.yml
 active_vms.yaml
 vagrant.yaml*
 vagrant.yml*
 host_vars/
+repo/
 tags
