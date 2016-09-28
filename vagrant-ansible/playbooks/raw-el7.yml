@@ -8,6 +8,11 @@
     - name: Pause to allow vagrant to finish...
       pause: seconds=5
 
+    - name: Check if offline
+      set_fact:
+        cache_flag: >-
+          {% if offline is defined and offline %}-C{% endif %}
+
     - name: Generate distro cache path
       set_fact:
         cache_dir: >-
@@ -29,10 +34,11 @@
         for REPO in `find /home/vagrant/sync/playbooks -name '*.repo'`; do
           cp $REPO /etc/yum.repos.d/;
         done;
-        rpm --import http://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{{ el_ver }};
-        yum install -y http://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ el_ver }}.noarch.rpm;
-        yum install -y centos-release-gluster;
-        yum install -y  --enablerepo=centos-gluster38-test {{ install_pkgs }};
+        sed -i "s/keepcache=0/keepcache=1/" /etc/yum.conf;
+        yum {{ cache_flag }} install -y http://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ el_ver }}.noarch.rpm;
+        yum {{ cache_flag }} install -y centos-release-gluster;
+        yum {{ cache_flag }} install -y --enablerepo=centos-gluster38-test {{ install_pkgs }};
+#        rpm --import http://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-{{ el_ver }};
 #        cd /etc/yum.repos.d/;
 #        curl -O http://download.gluster.org/pub/gluster/glusterfs/LATEST/EPEL.repo/glusterfs-epel.repo;
 #        curl -O http://download.gluster.org/pub/gluster/glusterfs/nfs-ganesha/2.3.2/EPEL.repo/nfs-ganesha.repo;

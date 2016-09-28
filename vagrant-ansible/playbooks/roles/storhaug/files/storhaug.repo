@@ -1,6 +1,6 @@
 [storhaug]
 name=Storhaug RPMs
-baseurl=file:///shared/repo/el$releasever/
+baseurl=https://copr-be.cloud.fedoraproject.org/results/jarrpa/storhaug/epel-$releasever-$basearch/
 enabled=1
 skip_if_unavailable=0
 gpgcheck=0

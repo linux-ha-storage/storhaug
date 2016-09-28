@@ -332,7 +332,7 @@ CTDB is managing Samba.
 <action name="stop"         timeout="100" />
 <action name="monitor"      timeout="20" interval="10" depth="0" />
 <action name="meta-data"    timeout="5" />
-<action name="validate-all"   timeout="30" />
+<action name="validate-all" timeout="30" />
 </actions>
 </resource-agent>
 END
@@ -365,6 +365,14 @@ invoke_ctdb() {
 	$OCF_RESKEY_ctdb_binary --socket=$OCF_RESKEY_ctdb_socket \
 		-t $timeout -T $timelimit \
 		"$@"
+	local rc=$?
+	if [ $rc != 0 ]; then
+		ocf_log err "FAILED: $OCF_RESKEY_ctdb_binary " \
+		"--socket=$OCF_RESKEY_ctdb_socket -t $timeout " \
+		"-T $timelimit $@"
+	fi
+
+	return $rc
 }
 
 # Enable any event scripts that are explicitly required.
@@ -586,7 +594,6 @@ ctdb_start() {
 	if [ $? -ne 0 ]; then
 		# cleanup smb.conf
 		cleanup_smb_conf
-
 		ocf_log err "Failed to execute $OCF_RESKEY_ctdbd_binary."
 		return $OCF_ERR_GENERIC
 	else
@@ -601,10 +608,8 @@ ctdb_start() {
 			if [ $? -ne 0 ]; then
 				# CTDB will be running, kill it before returning
 				ctdb_stop
-				ocf_log err "Can't invoke $OCF_RESKEY_ctdb_binary --socket=$OCF_RESKEY_ctdb_socket status"
 				return $OCF_ERR_GENERIC
-			fi
-			if ! echo $status | grep -qs 'UNHEALTHY (THIS'; then
+			elif ! echo $status | grep -Eqs 'UNHEALTHY[^ ]* \(THIS'; then
 				# Status does not say this node is unhealthy,
 				# so we're good to go.  Do a bit of final
 				# setup and (hopefully) return success.
@@ -628,7 +633,6 @@ ctdb_stop() {
 
 	# Tell it to die nicely
 	invoke_ctdb shutdown >/dev/null 2>&1
-	rv=$?
 
 	# No more Mr. Nice Guy
 	count=0
@@ -660,37 +664,27 @@ ctdb_stop() {
 
 ctdb_monitor() {
 	local status
+	local rc=$OCF_SUCCESS
 	# "ctdb status" exits non-zero if CTDB isn't running.
 	# It can also exit non-zero if there's a timeout (ctdbd blocked,
 	# stalled, massive load, or otherwise wedged).  If it's actually
 	# not running, STDERR will say "Errno:Connection refused(111)",
 	# whereas if it's wedged, it'll say various other unpleasant things.
-	status=$(invoke_ctdb status 2>&1)
-	if [ $? -ne 0 ]; then
-		if echo $status | grep -qs 'Connection refused'; then
-			return $OCF_NOT_RUNNING
-		elif echo $status | grep -qs 'Failed to connect to daemon'; then
-			ocf_log info "Failed to connect to daemon"
-			return $OCF_NOT_RUNNING
+	status=$(invoke_ctdb status 2>&1) || rc=$OCF_NOT_RUNNING
+	if [ $rc -ne $OCF_SUCCESS ]; then
+		ocf_log info "CTDB status failed: $status"
+		rc=$OCF_NOT_RUNNING
+	else
+		if echo $status | grep -Eqs '(OK|DISABLED|UNHEALTHY)[^ ]* \(THIS'; then
+			rc=$OCF_SUCCESS
 		elif echo $status | grep -qs '\(THIS NODE\)'; then
 			ocf_log info "CTDB status: $(echo $status | grep -s '\(THIS NODE\)')"
-			return $OCF_NOT_RUNNING
-		else
-			ocf_log err "CTDB status call failed: $status"
-			return $OCF_ERR_GENERIC
+			rc=$OCF_NOT_RUNNING
 		fi
 	fi
-	if echo $status | grep -Eqs '(OK|DISABLED) \(THIS'; then
-		return $OCF_SUCCESS
-	elif echo $status | grep -qs '\(THIS NODE\)'; then
-		ocf_log info "CTDB status: $(echo $status | grep -s '\(THIS NODE\)')"
-		return $OCF_NOT_RUNNING
-	fi
 
-	ocf_log err "CTDB status is bad: $status"
-	return $OCF_ERR_GENERIC
+	return $rc
 }
-
 
 ctdb_validate() {
 	# Required binaries (full path to tdbdump is intentional, as that's
@@ -719,7 +713,7 @@ ctdb_validate() {
 	fi
 
 	if [ -z "$OCF_RESKEY_ctdb_recovery_lock" ]; then
-		ocf_log err "ctdb_recovery_lock not specified."
+		ocf_log err "ctdb_recovery_lock not specified - CTDB will not do split-brain prevention!"
 		return $OCF_ERR_CONFIGURED
 	fi
 
@@ -736,19 +730,19 @@ ctdb_validate() {
 
 
 case $__OCF_ACTION in
-meta-data)	meta_data
-		exit $OCF_SUCCESS
-		;;
-start)		ctdb_start;;
-stop)		ctdb_stop;;
-monitor)	ctdb_monitor;;
-validate-all)	ctdb_validate;;
-usage|help)	ctdb_usage
-		exit $OCF_SUCCESS
-		;;
-*)		ctdb_usage
-		exit $OCF_ERR_UNIMPLEMENTED
-		;;
+meta-data)     meta_data
+               exit $OCF_SUCCESS
+               ;;
+start)         ctdb_start;;
+stop)          ctdb_stop;;
+monitor)       ctdb_monitor;;
+validate-all)  ctdb_validate;;
+usage|help)    ctdb_usage
+               exit $OCF_SUCCESS
+               ;;
+*)             ctdb_usage
+               exit $OCF_ERR_UNIMPLEMENTED
+               ;;
 esac
 rc=$?
 ocf_log debug "${OCF_RESOURCE_INSTANCE} $__OCF_ACTION : $rc"
