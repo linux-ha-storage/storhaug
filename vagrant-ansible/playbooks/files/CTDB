@@ -68,6 +68,7 @@
 
 : ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
 . ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+CRM_MASTER="${HA_SBIN_DIR}/crm_master -l reboot"
 
 #######################################################################
 # Default parameter values:
@@ -118,7 +119,7 @@ For more information see http://linux-ha.org/wiki/CTDB_(resource_agent)
 
 <parameters>
 
-<parameter name="ctdb_recovery_lock" unique="1" required="1">
+<parameter name="ctdb_recovery_lock" unique="1" required="0">
 <longdesc lang="en">
 The location of a shared lock file, common across all nodes.
 This must be on shared storage, e.g.: /shared-fs/samba/ctdb.lock
@@ -333,6 +334,9 @@ CTDB is managing Samba.
 <action name="monitor"      timeout="20" interval="10" depth="0" />
 <action name="meta-data"    timeout="5" />
 <action name="validate-all" timeout="30" />
+<action name="notify"       timeout="20" />
+<action name="promote"      timeout="30" />
+<action name="demote"       timeout="30" />
 </actions>
 </resource-agent>
 END
@@ -519,9 +523,38 @@ EOF
 	done
 }
 
+ctdb_crm_master() {
+	local rc=0
+	local value=$(invoke_ctdb pnn | sed 's/PNN://') || rc=$?
+	if [ $rc -eq 0 ]; then
+		local control=$(crmadmin -D | sed 's/Designated Controller is: //')
+		local node=$(crm_node -n)
+		if [ "${control}" == "${node}" ]; then (( value += 10000 )); fi
+		$CRM_MASTER -v ${value}
+	fi
+	return $rc
+}
+
+ctdb_master_return() {
+	local rc=$1
+	local status=$(invoke_ctdb getcapabilities 2>&1) || return $OCF_ERR_GENERIC
+	if [ $? -ne 0 ]; then
+		rc=$OCF_ERR_GENERIC
+	else
+		if echo $status | grep -Eqs 'RECMASTER: YES'; then
+			if [ $rc -eq $OCF_SUCCESS ]; then
+				rc=$OCF_RUNNING_MASTER
+			else
+				rc=$OCF_FAILED_MASTER
+			fi
+		fi
+	fi
+	return $rc
+}
+
 ctdb_usage() {
 	cat <<END
-usage: $0 {start|stop|monitor|validate-all|meta-data}
+usage: $0 {start|stop|monitor|validate-all|promote|demote|meta-data}
 
 Expects to have a fully populated OCF RA-compliant environment set.
 END
@@ -573,15 +606,20 @@ ctdb_start() {
 	local pub_addr_option=""
 	[ -f "${OCF_RESKEY_ctdb_config_dir}/public_addresses" ] && \
 		pub_addr_option="--public-addresses=${OCF_RESKEY_ctdb_config_dir}/public_addresses"
-	# start as disabled
-	local start_as_disabled="--start-as-disabled"
-	ocf_is_true "$OCF_RESKEY_ctdb_start_as_disabled" || start_as_disabled=""
 	# create the socket/run dir, if needed
 	[ -d $(dirname "$OCF_RESKEY_ctdb_socket") ] || mkdir -p $(dirname "$OCF_RESKEY_ctdb_socket")
 
+	# start as disabled and reclock
+	local start_as_disabled="--start-as-disabled"
+	if [ "x$OCF_RESKEY_ctdb_recovery_lock" != "x" ]; then
+		reclock="--reclock=$OCF_RESKEY_ctdb_recovery_lock"
+		ocf_is_true "$OCF_RESKEY_ctdb_start_as_disabled" || start_as_disabled=""
+	else
+		reclock=""
+	fi
+
 	# Start her up
 	$OCF_RESKEY_ctdbd_binary \
-		--reclock=$OCF_RESKEY_ctdb_recovery_lock \
 		--nlist=$OCF_RESKEY_ctdb_config_dir/nodes \
 		--socket=$OCF_RESKEY_ctdb_socket \
 		--dbdir=$OCF_RESKEY_ctdb_dbdir \
@@ -589,7 +627,7 @@ ctdb_start() {
 		--event-script-dir=$OCF_RESKEY_ctdb_config_dir/events.d \
 		--notification-script=$OCF_RESKEY_ctdb_config_dir/notify.sh \
 		--transport=tcp \
-		$start_as_disabled $log_option $pub_addr_option \
+		$reclock $start_as_disabled $log_option $pub_addr_option \
 		-d $OCF_RESKEY_ctdb_debuglevel
 	if [ $? -ne 0 ]; then
 		# cleanup smb.conf
@@ -597,6 +635,10 @@ ctdb_start() {
 		ocf_log err "Failed to execute $OCF_RESKEY_ctdbd_binary."
 		return $OCF_ERR_GENERIC
 	else
+		if [ "x$OCF_RESKEY_ctdb_recovery_lock" == "x" ]; then
+			invoke_ctdb setrecmasterrole off || return $OCF_ERR_GENERIC
+			ctdb_crm_master || return $OCF_ERR_GENERIC
+		fi
 		# Wait a bit for CTDB to stabilize
 		# (until start times out if necessary)
 		while true; do
@@ -649,6 +691,10 @@ ctdb_stop() {
 	# Cleanup smb.conf
 	cleanup_smb_conf
 
+	if [ "x$OCF_RESKEY_ctdb_recovery_lock" == "x" ]; then
+		$CRM_MASTER -D
+	fi
+
 	# It was a clean shutdown, return success
 	[ $rv -eq $OCF_SUCCESS ] && return $OCF_SUCCESS
 
@@ -675,12 +721,18 @@ ctdb_monitor() {
 		ocf_log info "CTDB status failed: $status"
 		rc=$OCF_NOT_RUNNING
 	else
-		if echo $status | grep -Eqs '(OK|DISABLED|UNHEALTHY)[^ ]* \(THIS'; then
-			rc=$OCF_SUCCESS
-		elif echo $status | grep -qs '\(THIS NODE\)'; then
+		if echo $status | grep -Eqs 'DISABLED[^ ]* \(THIS'; then
+			if crm_resource --resource ctdb --locate | grep -qs 'Master'; then
+				invoke_ctdb enable || rc=$OCF_ERR_GENERIC
+			fi
+		elif ! echo $status | grep -Eqs '(OK|UNHEALTHY)[^ ]* \(THIS'; then
 			ocf_log info "CTDB status: $(echo $status | grep -s '\(THIS NODE\)')"
 			rc=$OCF_NOT_RUNNING
 		fi
+	fi
+
+	if [ "x$OCF_RESKEY_ctdb_recovery_lock" == "x" ]; then
+		rc=$(ctdb_master_return $rc)
 	fi
 
 	return $rc
@@ -713,8 +765,7 @@ ctdb_validate() {
 	fi
 
 	if [ -z "$OCF_RESKEY_ctdb_recovery_lock" ]; then
-		ocf_log err "ctdb_recovery_lock not specified - CTDB will not do split-brain prevention!"
-		return $OCF_ERR_CONFIGURED
+		ocf_log warn "ctdb_recovery_lock not specified - CTDB will not do split-brain prevention!"
 	fi
 
 	lock_dir=$(dirname "$OCF_RESKEY_ctdb_recovery_lock")
@@ -729,6 +780,141 @@ ctdb_validate() {
 }
 
 
+ctdb_notify() {
+	local rc=$OCF_SUCCESS
+	mode="${OCF_RESKEY_CRM_meta_notify_type}-${OCF_RESKEY_CRM_meta_notify_operation}"
+	case "${mode}" in
+	post-promote)
+		if [ "x$OCF_RESKEY_CRM_meta_notify_master_resource" != "x" ]; then
+			status=$(invoke_ctdb status 2>&1) || rc=$OCF_ERR_GENERIC
+			if [ $rc -ne $OCF_ERR_GENERIC ] && echo $status | grep -Eqs 'DISABLED[^ ]* \(THIS'; then
+				invoke_ctdb enable || rc=$OCF_ERR_GENERIC
+			fi
+		fi
+		;;
+	esac
+
+	if [ "x$OCF_RESKEY_ctdb_recovery_lock" == "x" ] && [ ${mode} != "*-start" ]; then
+		ctdb_crm_master || rc=$OCF_ERR_GENERIC
+	fi
+
+	return $rc
+}
+
+ctdb_promote() {
+	local rc
+
+	# exit immediately if configuration is not valid
+	ctdb_validate || exit $?
+
+	# test the resource's current state
+	ctdb_monitor
+	rc=$?
+	case "$rc" in
+		"$OCF_SUCCESS")
+			# Running as slave. Normal, expected behavior.
+			ocf_log debug "Resource is currently running as Slave"
+			;;
+		"$OCF_RUNNING_MASTER")
+			# Already a master. Unexpected, but not a problem.
+			ocf_log info "Resource is already running as Master"
+			return $OCF_SUCCESS
+			;;
+		"$OCF_NOT_RUNNING")
+			# Currently not running. Need to start before promoting.
+			ocf_log info "Resource is currently not running"
+			ctdb_start
+			;;
+		*)
+			# Failed resource. Let the cluster manager recover.
+			ocf_log err "Unexpected error, cannot promote"
+			exit $rc
+			;;
+	esac
+
+	# actually promote the resource here (make sure to immediately
+	# exit with an $OCF_ERR_ error code if anything goes seriously
+	# wrong)
+	invoke_ctdb setrecmasterrole on || exit $OCF_ERR_GENERIC
+	invoke_ctdb enable || exit $OCF_ERR_GENERIC
+
+	# After the resource has been promoted, check whether the
+	# promotion worked. If the resource promotion is asynchronous, the
+	# agent may spin on the monitor function here -- if the resource
+	# does not assume the Master role within the defined timeout, the
+	# cluster manager will consider the promote action failed.
+	while true; do
+		ctdb_master_return $OCF_SUCCESS
+		if [ $? -eq $OCF_RUNNING_MASTER ]; then
+			ocf_log debug "Resource promoted"
+			break
+		else
+			ocf_log debug "Resource still awaiting promotion"
+			sleep 1
+		fi
+	done
+
+	# only return $OCF_SUCCESS if _everything_ succeeded as expected
+	return $OCF_SUCCESS
+}
+
+ctdb_demote() {
+	local rc
+
+	# exit immediately if configuration is not valid
+	ctdb_validate || exit $?
+
+	# test the resource's current state
+	ctdb_monitor
+	rc=$?
+	case "$rc" in
+		"$OCF_RUNNING_MASTER")
+			# Running as slave. Normal, expected behavior.
+			ocf_log debug "Resource is currently running as Master"
+			;;
+		"$OCF_SUCCESS")
+			# Already a master. Unexpected, but not a problem.
+			ocf_log info "Resource is already running as Slave"
+			return $OCF_SUCCESS
+			;;
+		"$OCF_NOT_RUNNING")
+			# Currently not running. Need to start before promoting.
+			ocf_log err "Resource is currently not running"
+			exit $OCF_ERR_GENERIC
+			;;
+		*)
+			# Failed resource. Let the cluster manager recover.
+			ocf_log err "Unexpected error, cannot promote"
+			exit $rc
+			;;
+	esac
+
+	# actually demote the resource here (make sure to immediately
+	# exit with an $OCF_ERR_ error code if anything goes seriously
+	# wrong)
+	invoke_ctdb setrecmasterrole off || exit $OCF_ERR_GENERIC
+	invoke_ctdb enable || exit $OCF_ERR_GENERIC
+
+	# After the resource has been demoted, check whether the
+	# demotion worked. If the resource demotion is asynchronous, the
+	# agent may spin on the monitor function here -- if the resource
+	# does not assume the Slave role within the defined timeout, the
+	# cluster manager will consider the demote action failed.
+	while true; do
+		ctdb_master_return $OCF_SUCCESS
+		if [ $? -eq $OCF_RUNNING_MASTER ]; then
+			ocf_log debug "Resource still awaiting demotion"
+			sleep 1
+		else
+			ocf_log debug "Resource demoted"
+			break
+		fi
+	done
+
+	# only return $OCF_SUCCESS if _everything_ succeeded as expected
+	return $OCF_SUCCESS
+}
+
 case $__OCF_ACTION in
 meta-data)     meta_data
                exit $OCF_SUCCESS
@@ -737,6 +923,9 @@ start)         ctdb_start;;
 stop)          ctdb_stop;;
 monitor)       ctdb_monitor;;
 validate-all)  ctdb_validate;;
+notify)        ctdb_notify;;
+promote)       ctdb_promote;;
+demote)        ctdb_demote;;
 usage|help)    ctdb_usage
                exit $OCF_SUCCESS
                ;;

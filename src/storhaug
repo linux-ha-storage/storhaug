@@ -349,17 +349,6 @@ setup_create_resources()
     pcs cluster cib ${cibfile}
 
     # Shared volumes
-    mkdir -p "${HA_MNT_DIR}/${HA_SMB_MNT_DIR}"
-    pcs -f ${cibfile} resource create ctdb_lock ocf:heartbeat:Filesystem \
-        params \
-            device="localhost:/${HA_SMB_VOL}" \
-            directory="${HA_MNT_DIR}/${HA_SMB_MNT_DIR}" \
-            fstype="glusterfs" \
-            options="_netdev,defaults,direct-io-mode=enable,transport=tcp,xlator-option=*client*.ping-timeout=10" \
-        --clone ctdb_lock-clone ctdb_lock meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
-
-    pcs -f ${cibfile} constraint location ctdb_lock-clone rule resource-discovery=exclusive score=0 role eq storage
-
     mkdir -p "${HA_MNT_DIR}/${HA_NFS_MNT_DIR}"
     pcs -f ${cibfile} resource create ganesha_state ocf:heartbeat:Filesystem \
         params \
@@ -376,19 +365,17 @@ setup_create_resources()
     # CTDB
     pcs -f ${cibfile} resource create ctdb ocf:heartbeat:CTDB \
         params \
-            ctdb_recovery_lock="${HA_MNT_DIR}/${HA_SMB_MNT_DIR}/lockfile" \
             ctdb_socket="/var/run/ctdb/ctdbd.socket" \
             ctdb_manages_winbind="no" \
             ctdb_manages_samba="no" \
             ctdb_logfile="/var/log/log.ctdb" \
         op monitor interval="10" timeout="30" \
+        op monitor interval="11" timeout="30" role="Master" \
         op start interval="0" timeout="90" \
         op stop interval="0" timeout="100" \
-        --clone ctdb-clone ctdb meta interleave="true" globally-unique="false" clone-max="${STORAGE_NUM_SERVERS}"
-
-    # CTDB: We need our shared recovery lock file
-    pcs -f ${cibfile} constraint colocation add ctdb-clone with ctdb_lock-clone INFINITY
-    pcs -f ${cibfile} constraint order ctdb_lock-clone then ctdb-clone INFINITY
+        op promote interval="0" timeout="30" \
+        op demote interval="0" timeout="30" \
+        --master meta interleave="true" globally-unique="false" notify="true" clone-max="${STORAGE_NUM_SERVERS}"
 
     # Samba
     pcs -f ${cibfile} resource create nmb systemd:nmb \
@@ -403,8 +390,8 @@ setup_create_resources()
     pcs -f ${cibfile} resource clone samba-group meta interleave="true" clone-max="${STORAGE_NUM_SERVERS}"
 
     # Samba: We need CTDB
-    pcs -f ${cibfile} constraint colocation add samba-group-clone with ctdb-clone INFINITY
-    pcs -f ${cibfile} constraint order ctdb-clone then samba-group-clone INFINITY
+    pcs -f ${cibfile} constraint colocation add samba-group-clone with ctdb-master INFINITY
+    pcs -f ${cibfile} constraint order ctdb-master then samba-group-clone INFINITY
 
     # Ganesha
     pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
