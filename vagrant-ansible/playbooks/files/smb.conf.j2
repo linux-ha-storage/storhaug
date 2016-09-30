@@ -35,7 +35,7 @@
 	store dos attributes = Yes
 	kernel share modes = No
 	debug pid = yes
-{% if samba['config'] %}
+{% if samba['config'] is defined and samba['config'] %}
 {% for opt in samba['config'] %}
 	{{ opt }} = {{ samba['config'][opt] }}
 {% endfor %}

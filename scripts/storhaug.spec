@@ -1,5 +1,5 @@
 %define major_version 0
-%define minor_version 12
+%define minor_version 13
 %define release 1%{?dist}
 
 Name: storhaug
@@ -132,6 +132,11 @@ systemctl disable nfs-server nfs-lock
 
 
 %changelog
+* Fri Sep 30 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.13-1
+ - Allow CTDB rec_lock to be optional.
+ - Use crm_master to determine CTDB rec_master.
+ - Remove CTDB lock file volume.
+
 * Sat Sep 24 2016 Jose A. Rivera <jarrpa@redhat.com> - 0.12-1
  - Remove IP address parameter from trigger RA.
  - Trigger grace from notify action.

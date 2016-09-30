@@ -1,0 +1,78 @@
+---
+:vms:
+- :name: node1
+  :networks:
+  - :ip: 192.168.125.11
+  - :ip: 192.168.126.11
+- :name: node2
+  :networks:
+  - :ip: 192.168.125.12
+  - :ip: 192.168.126.12
+- :name: node3
+  :networks:
+  - :ip: 192.168.125.13
+  - :ip: 192.168.126.13
+- :name: node4
+  :networks:
+  - :ip: 192.168.125.14
+  - :ip: 192.168.126.14
+:vms_common:
+  :box: centos/7
+  :os: el7
+  :memory: 2048
+  :cpus: 2
+  :networks:
+  - :netid: :private_network
+  - :netid: :private_network
+  :disks:
+  - :size: 2
+    :parts:
+    - :fs: xfs
+      :mount: "/data"
+      :name: data
+      :size: 100%
+  :sync_folders:
+  - :src: "../src"
+    :dest: "/shared/src"
+  - :src: "../scripts"
+    :dest: "/shared/scripts"
+:groups:
+  :ha_servers:
+  - all
+  :smb_servers:
+  - all
+  :nfs_servers:
+  - all
+  :gluster_servers:
+  - all
+:ha:
+  :ha_name: storhaug
+  :virtual_ips:
+  - 192.168.125.111
+  - 192.168.125.112
+:samba:
+  :setup_samba: true
+  :shares:
+    :share1:
+      :comment: GlusterFS Share
+      :path: "/"
+      :read only: 'No'
+      :guest ok: 'Yes'
+      :kernel share modes: 'No'
+      :vfs objects: glusterfs
+      :glusterfs:loglevel: '10'
+      :glusterfs:logfile: "/var/log/glusterfs/glusterfs-share.log"
+      :glusterfs:volume: share
+:ctdb:
+  :setup_ctdb: true
+:ad:
+  :setup_ad: false
+:gluster:
+  :setup_gluster: true
+  :bricks_dir: "/data/bricks"
+  :volumes:
+  - :name: share
+  - :name: state
+  - :name: export_vol
+:ganesha:
+  :setup_ganesha: true

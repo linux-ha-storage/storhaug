@@ -50,3 +50,8 @@
     - name: Pull yum cache
       synchronize: "mode=pull dest={{ cache_dir }} src=/var/cache/yum"
       run_once: True
+
+    - name: Push hosts file
+      template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0644
+      with_items:
+        - { src: 'files/hosts.j2', dest: '/etc/hosts' }

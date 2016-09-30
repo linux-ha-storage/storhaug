@@ -13,114 +13,32 @@ projectdir = File.expand_path File.dirname(__FILE__)
 
 #==============================================================================
 #
-# Default VM settings
+# Load settings if present, otherwise output sane defaults and exit
 #
 
-settings = {
-  :vms => [
-    { :name => 'node1', },
-    { :name => 'node2', },
-    { :name => 'node3', },
-    { :name => 'node4', },
-  ],
-  :vms_common => {
-    :box => 'centos/'+EL_VER,
-    :os => 'el'+EL_VER,
-    :memory => 2048,
-    :cpus => 2,
-    :networks => [
-      {
-        :netid => :public_network,
-        :auto_config => false,
-        :dev => "virbr0",
-        :type => "bridge",
-      },
-    ],
-    :disks => [
-      {
-        :size => 2, #gigabytes
-        :parts => [
-          {
-            :fs => "xfs",
-            :mount => "/data",
-            :name => "data",
-            :size => "100%",
-          },
-        ],
-      },
-    ],
-    :sync_folders => [
-      { :src => "../source", :dest => "/shared/src", },
-      { :src => "../scripts", :dest => "/shared/scripts", },
-      { :src => "../repo", :dest => "/shared/repo", },
-    ],
-  },
-  :groups => {
-    :ha_servers => [ "all" ],
-    :smb_servers => [ "all" ],
-    :nfs_servers => [ "all" ],
-    :gluster_servers => [ "all" ],
-  },
-  :ha => {
-    :ha_name => "storhaug",
-    :virtual_ips => [
-      { :ip => "192.168.121.111" },
-      { :ip => "192.168.121.112" },
-    ],
-  },
-  :samba => {
-    :setup_samba => true,
-    :config => nil,
-  },
-  :ctdb => {
-    :setup_ctdb => true,
-    :config => nil,
-  },
-  :ad => {
-    :setup_ad => false,
-    :domain => "domain.com",
-    :dns => "0.0.0.0",
-  },
-  :gluster => {
-    :setup_gluster => true,
-    :bricks_dir => "/data/bricks",
-    :volumes => [
-        { name: 'share' },
-         { name: "state" },
-        { name: 'ctdb', replica: "n", mount: "/shared/lock" },
-      ],
-  },
-}
-
-#==============================================================================
-#
-# Load (if present) and write out custom settings
-#
-
-custom_settings = {}
+settings = {}
 
 f = File.join(projectdir, 'vagrant.yaml')
 
 if File.exists?(f)
   begin
-    custom_settings = YAML::load_file f
-    if custom_settings == false then raise end
+    settings = YAML::load_file f
+    if settings == false then raise end
   rescue
     retry
   end
 else
-  File.open(f, 'w') do |file|
-    file.write settings.to_yaml
+  f2 = File.join(projectdir, 'defaults.yaml')
+  if File.exists?(f2)
+    settings = YAML::load_file f2
+    File.open(f, 'w') do |file|
+      file.write settings.to_yaml
+    end
   end
-  puts "Wrote initial config: [ #{f} ]"
+  puts "Wrote initial (default) config: [ #{f} ]"
   puts "Please verify settings and run your command again."
+  puts "See defaults.yaml for documentation."
   exit
-end
-
-settings.merge!(custom_settings)
-
-File.open(f, 'w') do |file|
-  file.write settings.to_yaml
 end
 
 vms        = settings[:vms]
