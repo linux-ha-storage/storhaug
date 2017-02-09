@@ -31,7 +31,7 @@
 
     - name: Make sure playbook dependencies are installed
       raw: >
-        for REPO in `find /home/vagrant/sync/playbooks -name '*.repo'`; do
+        for REPO in `find /shared/playbooks -name '*.repo'`; do
           cp $REPO /etc/yum.repos.d/;
         done;
         sed -i "s/keepcache=0/keepcache=1/" /etc/yum.conf;

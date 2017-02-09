@@ -261,10 +261,9 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       end
 
       if vms_common[:networks]
-        vms_common[:networks].each do |net|
+        vms_common[:networks].each_with_index do |net,i|
           netid = net[:netid]
           netopts = net.except(:netid)
-          i = vms_common[:networks].index(net)
           if machine[:networks] and i < machine[:networks].length
             netopts.merge!(machine[:networks][i])
           end

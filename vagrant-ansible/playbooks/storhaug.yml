@@ -212,14 +212,14 @@
     - name: Copy CTDB config files
       template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0744
       with_items:
-        - { src: "{% if ctdb['config_file'] is defined and ctdb['config_file'] %}{{ ctdb['config_file'] }}{% else %}'files/ctdb'{% endif %}", dest: '/etc/sysconfig/ctdb' }
+        - { src: "{% if ctdb['config_file'] is defined and ctdb['config_file'] %}{{ ctdb['config_file'] }}{% else %}files/ctdb{% endif %}", dest: '/etc/sysconfig/ctdb' }
         - { src: 'files/nodes.j2', dest: '/etc/ctdb/nodes' }
       when: ctdb['setup_ctdb'] is defined and ctdb['setup_ctdb']
 
     - name: Copy Samba config files
       template: src={{item.src}} dest={{item.dest}} owner=root group=root mode=0744
       with_items:
-        - { src: "{% if samba['config_file'] is defined and samba['config_file'] %}{{ samba['config_file'] }}{% else %}'files/smb.conf.j2'{% endif %}", dest: '/etc/samba/smb.conf' }
+        - { src: "{% if samba['config_file'] is defined and samba['config_file'] %}{{ samba['config_file'] }}{% else %}files/smb.conf.j2{% endif %}", dest: '/etc/samba/smb.conf' }
       when: samba['setup_samba'] is defined and samba['setup_samba']
 
     - name: Ensure share directories exist
@@ -251,8 +251,8 @@
   name: Storhaug Configuration and Initialization
   become: yes 
 
-  roles:
-    - storhaug
+#  roles:
+#    - storhaug
 
   tasks:
     - name: Copy Storhaug config files

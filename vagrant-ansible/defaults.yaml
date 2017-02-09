@@ -36,6 +36,12 @@
     :dest: "/shared/src"
   - :src: "../scripts"
     :dest: "/shared/scripts"
+  - :src: "../repo"
+    :dest: "/shared/repo"
+    :type: rsync
+  - :src: "playbooks"
+    :dest: "/shared/playbooks"
+    :type: rsync
 :groups:
   :ha_servers:
   - all
@@ -72,7 +78,19 @@
   :bricks_dir: "/data/bricks"
   :volumes:
   - :name: share
+    :opts:
+      :user.smb: disable
+      :nfs.disable: 'true'
+      :network.ping-timeout: '10'
   - :name: state
+    :opts:
+      :user.smb: disable
+      :nfs.disable: 'true'
+      :network.ping-timeout: '10'
   - :name: export_vol
+    :opts:
+      :user.smb: disable
+      :nfs.disable: 'true'
+      :network.ping-timeout: '10'
 :ganesha:
   :setup_ganesha: true
