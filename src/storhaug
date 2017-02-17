@@ -305,6 +305,12 @@ create_virt_ip()
 
     pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
     pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger
+
+    pcs -f ${cibfile} constraint colocation add vip${ipcount} with nfs-ganesha-clone INFINITY
+    pcs -f ${cibfile} constraint order nfs-ganesha-clone then vip${ipcount}
+
+    pcs -f ${cibfile} constraint colocation add vip${ipcount} with ctdb-master INFINITY
+    pcs -f ${cibfile} constraint order ctdb-master then vip${ipcount}
 }
 
 ### Setup functions
