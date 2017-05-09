@@ -377,11 +377,10 @@ setup_cluster()
     pcs property set stonith-enabled=false || storlog "WARN" "Failed: pcs property set stonith-enabled=false"
 }
 
-setup_create_resources_shared()
+setup_create_resources_shared_glusterfs()
 {
     local cibfile="$1"
 
-    # Shared volumes
     mkdir -p "${HA_MNT_DIR}/${HA_NFS_MNT_DIR}"
     pcs -f ${cibfile} resource create ganesha_state ocf:heartbeat:Filesystem \
         params \
@@ -396,11 +395,22 @@ setup_create_resources_shared()
     pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create filesystem resources."
 }
 
+# nothing needed for now
+setup_create_resources_shared_rados_kv()
+{
+    :
+}
+
 setup_create_resources_nfs()
 {
     local cibfile="$1"
 
-    setup_create_resources_shared ${cibfile}
+    # Shared volumes
+    if [[ ${HA_NFS_TYPE} == "glusterfs" ]]; then
+        setup_create_resources_shared_glusterfs ${cibfile}
+    elif [[ ${HA_NFS_TYPE} == "rados_kv" ]]; then
+        setup_create_resources_shared_rados_kv ${cibfile}
+    fi
 
     # Ganesha
     pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
@@ -412,9 +422,11 @@ setup_create_resources_nfs()
                                            globally-unique="false" \
                                            notify="true"
 
-    # Ganesha: We need our shared state FS
-    pcs -f ${cibfile} constraint colocation add nfs-ganesha-clone with ganesha_state-clone INFINITY
-    pcs -f ${cibfile} constraint order ganesha_state-clone then nfs-ganesha-clone INFINITY
+    if [[ ${HA_NFS_TYPE} == "glusterfs" ]]; then
+        # Ganesha: We need our shared state FS
+        pcs -f ${cibfile} constraint colocation add nfs-ganesha-clone with ganesha_state-clone INFINITY
+        pcs -f ${cibfile} constraint order ganesha_state-clone then nfs-ganesha-clone INFINITY
+    fi
 
     pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create nfs service resources."
 }
@@ -495,8 +507,7 @@ setup_create_resources()
     rm -f ${cibfile}
 }
 
-# TODO: Move to RA
-setup_state_volume()
+setup_state_volume_glusterfs()
 {
     local mnt=$(mktemp -d --tmpdir=$HA_CONF_secdir)
     local dname=""
@@ -540,6 +551,22 @@ setup_state_volume()
 
     umount ${mnt}
     rmdir ${mnt}
+}
+
+# nothing needed for now
+setup_state_volume_rados_kv()
+{
+    :
+}
+
+# TODO: Move to RA
+setup_state_volume()
+{
+    if [[ ${HA_NFS_TYPE} == "glusterfs" ]]; then
+        setup_state_volume_glusterfs
+    elif [[ ${HA_NFS_TYPE} == "rados_kv" ]]; then
+        setup_state_volume_rados_kv
+    fi
 }
 
 ### Teardown functions
