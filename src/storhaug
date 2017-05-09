@@ -285,6 +285,45 @@ create_virt_ip_constraints()
     do_create_virt_ip_constraints ${cibfile} ${ipcount} ${primary} ${tail} ${head}
 }
 
+stack_resources_on_vip_smb()
+{
+    local cibfile=${1}; shift
+    local ipcount=${1}; shift
+
+    pcs -f ${cibfile} constraint colocation add vip${ipcount} with ctdb-master INFINITY
+    pcs -f ${cibfile} constraint order ctdb-master then vip${ipcount}
+}
+
+stack_resources_on_vip_nfs()
+{
+    local cibfile=${1}; shift
+    local ipcount=${1}; shift
+
+    pcs -f ${cibfile} resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
+        --clone vip${ipcount}_trigger-clone vip${ipcount}_trigger \
+	meta interleave="true" globally-unique="false" notify="true" clone-max=1
+
+    pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger-clone with vip${ipcount} INFINITY
+    pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger-clone
+
+    pcs -f ${cibfile} constraint colocation add vip${ipcount} with nfs-ganesha-clone INFINITY
+    pcs -f ${cibfile} constraint order nfs-ganesha-clone then vip${ipcount}
+}
+
+stack_resources_on_vip()
+{
+    local cibfile=${1}; shift
+    local ipcount=${1}; shift
+
+    for svc in ${HA_SERVICES}; do
+        if [[ "${svc}" == "nfs" ]]; then
+            stack_resources_on_vip_nfs ${cibfile} ${ipcount}
+        elif [[ "${svc}" == "smb" ]]; then
+            stack_resources_on_vip_smb ${cibfile} ${ipcount}
+        fi
+    done
+}
+
 create_virt_ip()
 {
     local cibfile=${1}; shift
@@ -300,18 +339,7 @@ create_virt_ip()
 
     pcs -f ${cibfile} constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
 
-    pcs -f ${cibfile} resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
-        --clone vip${ipcount}_trigger-clone vip${ipcount}_trigger \
-	meta interleave="true" globally-unique="false" notify="true" clone-max=1
-
-    pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger-clone with vip${ipcount} INFINITY
-    pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger-clone
-
-    pcs -f ${cibfile} constraint colocation add vip${ipcount} with nfs-ganesha-clone INFINITY
-    pcs -f ${cibfile} constraint order nfs-ganesha-clone then vip${ipcount}
-
-    pcs -f ${cibfile} constraint colocation add vip${ipcount} with ctdb-master INFINITY
-    pcs -f ${cibfile} constraint order ctdb-master then vip${ipcount}
+    stack_resources_on_vip ${cibfile} ${ipcount}
 }
 
 ### Setup functions
@@ -349,11 +377,9 @@ setup_cluster()
     pcs property set stonith-enabled=false || storlog "WARN" "Failed: pcs property set stonith-enabled=false"
 }
 
-setup_create_resources()
+setup_create_resources_shared()
 {
-    local cibfile=$(mktemp --tmpdir=$HA_CONF_secdir)
-
-    pcs cluster cib ${cibfile}
+    local cibfile="$1"
 
     # Shared volumes
     mkdir -p "${HA_MNT_DIR}/${HA_NFS_MNT_DIR}"
@@ -368,6 +394,34 @@ setup_create_resources()
     pcs -f ${cibfile} constraint location ganesha_state-clone rule resource-discovery=exclusive score=0 role eq storage
 
     pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create filesystem resources."
+}
+
+setup_create_resources_nfs()
+{
+    local cibfile="$1"
+
+    setup_create_resources_shared ${cibfile}
+
+    # Ganesha
+    pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
+        params \
+            config="${HA_NFS_CONF}" \
+            state_fs="${HA_NFS_TYPE}" \
+            state_mnt="${HA_MNT_DIR}/${HA_NFS_MNT_DIR}" \
+        --clone nfs-ganesha-clone ganesha meta interleave="true" \
+                                           globally-unique="false" \
+                                           notify="true"
+
+    # Ganesha: We need our shared state FS
+    pcs -f ${cibfile} constraint colocation add nfs-ganesha-clone with ganesha_state-clone INFINITY
+    pcs -f ${cibfile} constraint order ganesha_state-clone then nfs-ganesha-clone INFINITY
+
+    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create nfs service resources."
+}
+
+setup_create_resources_smb()
+{
+    local cibfile="$1"
 
     # CTDB
     pcs -f ${cibfile} resource create ctdb ocf:heartbeat:CTDB \
@@ -400,20 +454,12 @@ setup_create_resources()
     pcs -f ${cibfile} constraint colocation add samba-group-clone with ctdb-master INFINITY
     pcs -f ${cibfile} constraint order ctdb-master then samba-group-clone INFINITY
 
-    # Ganesha
-    pcs -f ${cibfile} resource create nfs-ganesha ocf:heartbeat:ganesha \
-        params \
-            config="${HA_NFS_CONF}" \
-            state_fs="${HA_NFS_TYPE}" \
-            state_mnt="${HA_MNT_DIR}/${HA_NFS_MNT_DIR}" \
-        --clone nfs-ganesha-clone ganesha meta interleave="true" \
-                                           globally-unique="false"
+    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create smb service resources."
+}
 
-    # Ganesha: We need our shared state FS
-    pcs -f ${cibfile} constraint colocation add nfs-ganesha-clone with ganesha_state-clone INFINITY
-    pcs -f ${cibfile} constraint order ganesha_state-clone then nfs-ganesha-clone INFINITY
-
-    pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create service resources."
+setup_create_resources_vip()
+{
+    local cibfile="$1"
 
     # Virtual IPs
     local ipcount=0
@@ -429,6 +475,22 @@ setup_create_resources()
     fi
 
     pcs cluster cib-push ${cibfile} || storlog "ERR" "Failed to create virtual IP resources."
+}
+
+setup_create_resources()
+{
+    local cibfile=$(mktemp --tmpdir=$HA_CONF_secdir)
+
+    pcs cluster cib ${cibfile}
+
+    for svc in ${HA_SERVICES}; do
+        if [[ "${svc}" == "nfs" ]]; then
+            setup_create_resources_nfs ${cibfile}
+        elif [[ "${svc}" == "smb" ]]; then
+            setup_create_resources_smb ${cibfile}
+        fi
+    done
+    setup_create_resources_vip ${cibfile}
 
     rm -f ${cibfile}
 }
