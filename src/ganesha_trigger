@@ -82,7 +82,7 @@ trigger_start() {
 grace() {
 	rc=1
 	# Loop until success or timeout
-	while [ rc != 0 ]; do
+	while [ $rc != 0 ]; do
 		dbus-send --print-reply --system --dest=org.ganesha.nfsd \
 		/org/ganesha/nfsd/admin org.ganesha.nfsd.admin.grace \
 		string:${1}
