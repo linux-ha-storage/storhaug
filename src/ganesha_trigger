@@ -97,15 +97,15 @@ grace() {
 }
 
 trigger_notify() {
-	# since this is a clone RA we should only ever see pre-start
-	# or post-stop
+	# since this is a clone RA we should only ever see post-start
+	# or pre-stop
 	mode="${OCF_RESKEY_CRM_meta_notify_type}-${OCF_RESKEY_CRM_meta_notify_operation}"
 	case "${mode}" in
-	pre-start)
-		grace "5:$OCF_RESKEY_CRM_meta_notify_start_uname"
+	post-start)
+		grace "5:$OCF_RESKEY_CRM_meta_notify_stop_uname" # takeover dead after start
 		;;
-	post-stop)
-		grace "2:$OCF_RESKEY_CRM_meta_notify_stop_uname"
+	pre-stop)
+		grace "2:$OCF_RESKEY_CRM_meta_notify_stop_uname" # release before death
 		;;
 	esac
 
