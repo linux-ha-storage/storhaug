@@ -301,10 +301,11 @@ create_virt_ip()
     pcs -f ${cibfile} constraint location vip${ipcount} rule resource-discovery=exclusive score=0 role eq storage
 
     pcs -f ${cibfile} resource create vip${ipcount}_trigger ocf:heartbeat:ganesha_trigger \
-        meta resource-stickiness="0"
+        --clone vip${ipcount}_trigger-clone vip${ipcount}_trigger \
+	meta interleave="true" globally-unique="false" notify="true" clone-max=1
 
-    pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger with vip${ipcount} INFINITY
-    pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger
+    pcs -f ${cibfile} constraint colocation add vip${ipcount}_trigger-clone with vip${ipcount} INFINITY
+    pcs -f ${cibfile} constraint order vip${ipcount} then vip${ipcount}_trigger-clone
 
     pcs -f ${cibfile} constraint colocation add vip${ipcount} with nfs-ganesha-clone INFINITY
     pcs -f ${cibfile} constraint order nfs-ganesha-clone then vip${ipcount}
@@ -406,8 +407,7 @@ setup_create_resources()
             state_fs="${HA_NFS_TYPE}" \
             state_mnt="${HA_MNT_DIR}/${HA_NFS_MNT_DIR}" \
         --clone nfs-ganesha-clone ganesha meta interleave="true" \
-                                           globally-unique="false" \
-                                           notify="true"
+                                           globally-unique="false"
 
     # Ganesha: We need our shared state FS
     pcs -f ${cibfile} constraint colocation add nfs-ganesha-clone with ganesha_state-clone INFINITY
